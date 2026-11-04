@@ -416,6 +416,26 @@ class Form extends Component
         }
     }
 
+    /**
+     * The steps of the Office of the CEO's record page, in the same frame as the memo builder (4 November 2026).
+     * The team and costs are added on the activity page once it is saved.
+     *
+     * @return list<array{id: string, number: int, title: string, done: bool, locked: bool}>
+     */
+    private function pageSteps(): array
+    {
+        $saved = (bool) $this->activity?->exists;
+        $filled = fn (string ...$fields): bool => collect($fields)->every(fn (string $f) => trim((string) $this->{$f}) !== '');
+
+        return [
+            ['id' => 'step-details', 'number' => 1, 'title' => 'About the activity', 'done' => $filled('title', 'activity_category_id', 'purpose'), 'locked' => false],
+            ['id' => 'step-source', 'number' => 2, 'title' => 'Source', 'done' => $filled('organising_department_id'), 'locked' => false],
+            ['id' => 'step-dates', 'number' => 3, 'title' => 'Dates and location', 'done' => $filled('start_date', 'end_date'), 'locked' => false],
+            ['id' => 'step-budget', 'number' => 4, 'title' => 'Budget', 'done' => $filled('requested_budget') || $filled('budget_line_id'), 'locked' => false],
+            ['id' => 'step-team', 'number' => 5, 'title' => 'Team and costs', 'done' => $saved && $this->activity->participants()->exists(), 'locked' => ! $saved],
+        ];
+    }
+
     public function render(BudgetPosition $budget): View
     {
         $start = rescue(fn () => $this->start_date ? Carbon::parse($this->start_date) : null, null, false);
@@ -433,6 +453,7 @@ class Form extends Component
                 ? User::query()->role(User::ROLE_HOD)->where('department_id', $this->organising_department_id)->orderByDesc('is_active')->orderBy('name')->get(['id', 'name', 'is_active'])
                 : collect(),
             'office' => $this->isOffice(),
+            'pageSteps' => $this->embedded ? [] : $this->pageSteps(),
             'fullAbout' => $this->requiresFullAbout(),
             'budget' => $this->organising_department_id ? $budget->forDepartment(FinancialYear::fromLabel($fy), (int) $this->organising_department_id) : null,
             'budgetLines' => BudgetLine::query()->approved()->where('financial_year', $fy)->when($this->organising_department_id, fn ($q, $id) => $q->where('department_id', $id))->orderBy('name')->get(),
