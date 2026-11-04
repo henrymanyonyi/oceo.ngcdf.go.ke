@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Enums\ActivityStatus;
+use App\Enums\CostMethod;
+use App\Enums\RateUnit;
 use App\Models\Activity;
 use App\Models\ActivityCost;
 use App\Models\ActivityParticipant;
@@ -143,13 +145,12 @@ class MemoDocument
         $lines = $activity->costs;
         $total = $lines->sum(fn (ActivityCost $c) => Money::toCents($c->estimated_amount));
         $submittedAt = $activity->statusHistory->first(fn (ActivityStatusHistory $h) => in_array($h->to_status, [ActivityStatus::UnderReview, ActivityStatus::AwaitingDecision], true))?->created_at;
-        $department = $activity->organisingDepartment?->name;
 
         return [
             'activity' => $activity,
             'isDraft' => $submittedAt === null && ! $activity->status->isApprovedOrLater(),
             'to' => 'Chief Executive Officer',
-            'from' => $department ? (str_contains(mb_strtolower($department), 'department') ? $department : $department.' Department') : 'Department not set',
+            'from' => $this->from($activity),
             // A Head's memo prints the date it is issued; an older memo, the date it was submitted, as before.
             'date' => $activity->issued_on ?? $submittedAt ?? today(),
             'refNo' => $activity->source_reference ?: $activity->reference,
@@ -163,6 +164,8 @@ class MemoDocument
             'byDepartment' => $this->byDepartment($activity, $lines, $total),
             'detailed' => $this->detailedBudget($activity, $lines),
             'itinerary' => $this->itinerary($activity),
+            'externalPayments' => $this->externalPayments($activity, $lines),
+            'adjusted' => $lines->contains(fn (ActivityCost $c) => $c->isOverridden()),
             'issues' => $this->issues($activity),
         ];
     }
@@ -187,6 +190,28 @@ class MemoDocument
     public function filename(Activity $activity): string
     {
         return $activity->reference.'-activity-memo-RESTRICTED.pdf';
+    }
+
+    /**
+     * FROM: the designation of the Head of Department who issues the memo, as they signed it ("Ag." when
+     * acting), e.g. "Manager, Information Communication Technology"; before it is signed, their designation
+     * on the staff list. Never the department's name in place of a designation (4 November 2026).
+     */
+    private function from(Activity $activity): string
+    {
+        if ($signed = $activity->signedDesignation()) {
+            return $signed;
+        }
+
+        foreach ([$activity->responsibleHod, $activity->creator] as $user) {
+            if ($user?->isHeadOfDepartment()) {
+                return $user->signingDesignation();
+            }
+        }
+
+        $department = $activity->organisingDepartment?->name;
+
+        return 'Head of Department'.($department ? ", {$department}" : '');
     }
 
     /** @return list<array{number: string, heading: string, paragraphs: list<string>}> */
@@ -223,9 +248,12 @@ class MemoDocument
         $team = $people.' '.($people === 1 ? 'officer' : 'officers').($externals ? " and {$externals} external ".($externals === 1 ? 'participant' : 'participants') : '');
         $vote = $activity->budgetLine ? 'charged under '.$activity->budgetLine->label() : 'charged to the department\'s vote';
 
+        $nights = DsaPeriod::nightsFor($activity->days);
+
         return sprintf(
-            'The estimated expenditure amounting to <strong>Kshs.%s</strong>, for %s over %d %s (%s to %s) at %s, shall be %s. Details of the proposed participants and the corresponding budget breakdown are provided in Annex: A attached hereto.',
+            'The estimated expenditure amounting to <strong>Kshs.%s</strong>, for %s over %d %s and %d %s (%s to %s) at %s, shall be %s. Details of the proposed participants and the corresponding budget breakdown are provided in Annex: A attached hereto.',
             e(number_format(intdiv($total, 100)).($total % 100 ? '.'.str_pad((string) ($total % 100), 2, '0', STR_PAD_LEFT) : '')), e($team), $activity->days, $activity->days === 1 ? 'day' : 'days',
+            $nights, $nights === 1 ? 'night' : 'nights',
             e($activity->start_date->format('jS F Y')), e($activity->end_date->format('jS F Y')),
             e($activity->locationSummary() ?: 'the venue stated'), e($vote),
         );
@@ -241,7 +269,7 @@ class MemoDocument
     {
         // Forwards since the memo last left the department.
         $fromDepartment = [ActivityStatus::Draft, ActivityStatus::ReturnedToHod, ActivityStatus::WithHod];
-        $lastSubmission = $activity->statusHistory->filter(fn (ActivityStatusHistory $h) => $h->to_status === ActivityStatus::UnderReview && in_array($h->from_status, $fromDepartment, true))->last();
+        $lastSubmission = $activity->statusHistory->filter(fn (ActivityStatusHistory $h) => in_array($h->to_status, [ActivityStatus::UnderReview, ActivityStatus::AwaitingDecision], true) && in_array($h->from_status, $fromDepartment, true))->last();
         $forwards = $activity->statusHistory
             ->filter(fn (ActivityStatusHistory $h) => ! $lastSubmission || $h->id > $lastSubmission->id)
             ->filter(fn (ActivityStatusHistory $h) => $h->to_status === ActivityStatus::AwaitingDecision || ($h->to_status === ActivityStatus::UnderReview && $h->from_status === ActivityStatus::UnderReview));
@@ -257,6 +285,12 @@ class MemoDocument
         $hodDesignation = $activity->signedDesignation()
             ?? ($preparer?->isHeadOfDepartment() ? $preparer->signingDesignation() : null);
 
+        // Sent directly to the CEO: nobody reviews or validates it, so those blocks are left out.
+        $review = $activity->isDirectToCeo() ? [] : [
+            ['label' => 'Reviewed by', 'name' => $acos?->user?->name, 'designation' => User::ROLES[User::ROLE_ASSISTANT_CHIEF_OF_STAFF], 'date' => $acos?->created_at],
+            ['label' => 'Validated by', 'name' => $cos?->user?->name, 'designation' => User::ROLES[User::ROLE_CHIEF_OF_STAFF], 'date' => $cos?->created_at],
+        ];
+
         return [
             [
                 'label' => 'Prepared by',
@@ -266,8 +300,7 @@ class MemoDocument
                     : ($hodDesignation ?? ($preparer?->roleLabel() ?? '')),
                 'date' => $submittedAt,
             ],
-            ['label' => 'Reviewed by', 'name' => $acos?->user?->name, 'designation' => User::ROLES[User::ROLE_ASSISTANT_CHIEF_OF_STAFF], 'date' => $acos?->created_at],
-            ['label' => 'Validated by', 'name' => $cos?->user?->name, 'designation' => User::ROLES[User::ROLE_CHIEF_OF_STAFF], 'date' => $cos?->created_at],
+            ...$review,
             ['label' => 'Approved by', 'name' => $activity->approved_at ? ($activity->approver?->name ?? 'Chief Executive Officer') : null, 'designation' => User::ROLES[User::ROLE_CEO], 'date' => $activity->approved_at],
         ];
     }
@@ -344,12 +377,21 @@ class MemoDocument
     private function detailedBudget(Activity $activity, Collection $lines): array
     {
         $people = $activity->participants->keyBy('id');
+        $nightsBasis = $this->settings->get('dsa_basis') !== DsaPeriod::BASIS_DAYS;
 
         return $lines
-            ->map(function (ActivityCost $line) use ($people) {
+            ->map(function (ActivityCost $line) use ($people, $nightsBasis) {
                 $person = $line->activity_participant_id ? $people->get($line->activity_participant_id) : null;
                 $amount = Money::toCents($line->estimated_amount);
                 $item = $line->category?->name.($line->is_computed || blank($line->description) ? '' : ': '.$line->description).($line->isOverridden() ? ' (adjusted)' : '');
+                $perPerson = ! $line->is_computed && $line->method() === CostMethod::PerPerson;
+                $quantity = $line->quantity !== null ? rtrim(rtrim((string) $line->quantity, '0'), '.') : null;
+
+                // An external participant's payment says what its count is when it is not the column's (nights or days).
+                $unit = $person?->is_external && $line->is_computed ? ($person->rate_unit ?? RateUnit::Night) : null;
+                if ($unit && $quantity !== null && ($unit === RateUnit::Once || ($unit === RateUnit::Day) === $nightsBasis)) {
+                    $quantity = $unit === RateUnit::Once ? 'once' : $quantity.' '.$unit->plural((int) $quantity);
+                }
 
                 return [
                     'id' => $line->id,
@@ -357,25 +399,36 @@ class MemoDocument
                     'category' => match (true) {
                         $person === null => 'Whole activity',
                         $person->isGroup() => (string) $person->group_label,
-                        $person->is_external => 'External: '.($person->external_category?->label() ?? 'Other'),
+                        $person->is_external => 'External: '.($person->external_designation ?: ($person->external_category?->label() ?? 'Other')),
                         default => $person->designation?->name ?? 'Officer',
                     },
-                    // The scale DSA is costed at: the officer's own, or their terms' (scale 10 for a casual, INTERN for an attachee).
-                    'scale' => $person && ! $person->is_external ? (string) (DsaRate::normaliseGrade(DsaRate::gradeFor($person->job_grade, $person->staff?->employment_type)) ?? $person->job_grade ?? '') : '',
-                    'per_person' => $person !== null,
-                    'people' => $person?->people() ?? 1,
-                    'days' => $line->quantity !== null ? rtrim(rtrim((string) $line->quantity, '0'), '.') : null,
-                    'rate' => $line->unit_rate !== null ? Money::toCents($line->unit_rate) : ($person ? $amount : null),
+                    // The scale DSA is costed at: the officer's own, or their terms' (scale 10 for a casual, INTERN for an attachee);
+                    // for an external participant paid at a DSA scale, that scale.
+                    'scale' => match (true) {
+                        $person === null => '',
+                        $person->is_external => $person->rate_source === ActivityParticipant::RATE_DSA ? (string) $person->job_grade : '',
+                        default => (string) (DsaRate::normaliseGrade(DsaRate::gradeFor($person->job_grade, $person->staff?->employment_type)) ?? $person->job_grade ?? ''),
+                    },
+                    // Per person: the number of people on the line. A participant's own line: that participant's people.
+                    'pax' => $perPerson ? (int) $line->quantity : ($person?->people()),
+                    'merge' => $person !== null && ! $perPerson,
+                    'days' => $perPerson ? null : $quantity,
+                    // Per person: the cost for one person. A fixed amount for the activity has no rate.
+                    'rate' => match (true) {
+                        $line->unit_rate !== null => Money::toCents($line->unit_rate),
+                        $person !== null => $amount,
+                        default => null,
+                    },
                     'amount' => $amount,
                     'sort' => [(int) $line->category?->sort_order, $person === null ? 1 : 0],
                 ];
             })
-            ->groupBy(fn (array $r) => implode('|', [$r['item'], $r['category'], $r['scale'], $r['days'], $r['rate'], $r['per_person'] ? $r['amount'] : 'shared-'.$r['id']]))
+            ->groupBy(fn (array $r) => implode('|', [$r['item'], $r['category'], $r['scale'], $r['days'], $r['rate'], $r['merge'] ? $r['amount'] : 'line-'.$r['id']]))
             ->map(fn (Collection $group) => [
                 'item' => $group->first()['item'],
                 'category' => $group->first()['category'],
                 'scale' => $group->first()['scale'],
-                'pax' => $group->first()['per_person'] ? $group->sum('people') : null,
+                'pax' => $group->first()['pax'] === null ? null : $group->sum('pax'),
                 'days' => $group->first()['days'],
                 'rate' => $group->first()['rate'],
                 'amount' => $group->sum('amount'),
@@ -387,16 +440,44 @@ class MemoDocument
     }
 
     /**
+     * External participants paid a rate: who, their days and nights, the rate and what it comes to,
+     * from the same computed line that is in the budget (one figure, never two).
+     *
+     * @param  Collection<int, ActivityCost>  $lines
+     * @return list<array{name: string, designation: string, from: Carbon, to: Carbon, days: int, nights: int, rate: string, units: string, amount: int}>
+     */
+    private function externalPayments(Activity $activity, Collection $lines): array
+    {
+        return $activity->participants->filter(fn (ActivityParticipant $p) => $p->hasPaymentRate())
+            ->map(function (ActivityParticipant $p) use ($activity, $lines) {
+                $line = $lines->first(fn (ActivityCost $c) => $c->is_computed && (int) $c->activity_participant_id === (int) $p->id);
+                $period = DsaPeriod::of($p->startOn($activity), max(1, $p->plannedDays($activity)));
+                $unit = $p->rate_unit ?? RateUnit::Night;
+                $units = $line?->quantity !== null ? (int) $line->quantity : $unit->units($period);
+
+                return [
+                    'name' => $p->displayName(),
+                    'designation' => (string) ($p->external_designation ?: $p->external_organisation),
+                    'from' => $p->startOn($activity),
+                    'to' => $p->endOn($activity),
+                    'days' => $period->days,
+                    'nights' => $period->nights(),
+                    'rate' => ($line?->unit_rate !== null ? 'Kshs.'.Money::format(Money::toCents($line->unit_rate)) : '').' '.strtolower($unit->label()).($p->rate_source === ActivityParticipant::RATE_DSA ? ' (DSA scale '.$p->job_grade.')' : ''),
+                    'units' => $unit === RateUnit::Once ? 'once' : $units.' '.$unit->plural($units),
+                    'amount' => $line ? Money::toCents($line->estimated_amount) : 0,
+                ];
+            })->values()->all();
+    }
+
+    /**
      * Annex C: who goes, and the days each one is on the activity.
      *
      * @return list<array<string, mixed>>
      */
     private function itinerary(Activity $activity): array
     {
-        $order = ['lead' => 0, 'member' => 1, 'support' => 2, 'driver' => 3];
-
         return $activity->participants
-            ->sortBy(fn (ActivityParticipant $p) => sprintf('%d-%d-%s', $p->is_external ? 1 : 0, $order[$p->role->value] ?? 9, mb_strtolower($p->displayName())))
+            ->sortBy(fn (ActivityParticipant $p) => sprintf('%d-%d-%s', $p->is_external ? 1 : 0, $p->role->rank(), mb_strtolower($p->displayName())))
             ->values()
             ->map(function (ActivityParticipant $p) use ($activity) {
                 $release = $p->releases->last();
@@ -406,12 +487,12 @@ class MemoDocument
                     'name' => $p->isGroup() ? (string) $p->group_label : $p->displayName(),
                     'number' => $p->is_external ? '' : (string) $p->staff?->staff_number,
                     'designation' => match (true) {
-                        $p->is_external => (string) $p->external_organisation,
+                        $p->is_external => implode(', ', array_filter([$p->external_designation, $p->external_organisation])),
                         $p->isGroup() => $p->people().' officers (scale '.$p->job_grade.')',
                         default => (string) $p->designation?->name,
                     },
                     'department' => $p->is_external ? 'External' : (string) $p->department?->name,
-                    'role' => $p->role->label(),
+                    'role' => $p->roleLabel(),
                     'from' => $p->startOn($activity),
                     'to' => $p->endOn($activity),
                     'days' => $p->plannedDays($activity),

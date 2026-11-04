@@ -3,14 +3,17 @@
 namespace App\Services;
 
 use App\Enums\ActivityStatus;
+use App\Enums\CostMethod;
 use App\Enums\ParticipantRole;
 use App\Enums\ParticipationStatus;
+use App\Enums\RateUnit;
 use App\Exceptions\ActivityWorkflowException;
 use App\Models\Activity;
 use App\Models\ActivityAmendment;
 use App\Models\ActivityCost;
 use App\Models\ActivityLocation;
 use App\Models\ActivityParticipant;
+use App\Models\CostCategory;
 use App\Models\DsaRate;
 use App\Models\Staff;
 use App\Models\User;
@@ -170,10 +173,11 @@ class ActivityEditor
      * @param  array<int, string>  $conflictReasons  staff id => reason, required where a conflict exists
      * @return array{added: int, warnings: list<string>, returned: bool}
      */
-    public function addStaff(Activity $activity, array $staffIds, ParticipantRole $role, User $user, array $conflictReasons = [], ?string $amendmentReason = null): array
+    public function addStaff(Activity $activity, array $staffIds, ParticipantRole $role, User $user, array $conflictReasons = [], ?string $amendmentReason = null, ?string $roleOther = null): array
     {
         $this->authorizeDetails($activity, $user);
         $this->assertEditable($activity);
+        $roleAttributes = $this->roleAttributes($role, $roleOther);
 
         $staff = Staff::query()->whereIn('id', $staffIds)->get()->keyBy('id');
         $existing = $activity->participants()->whereIn('staff_id', $staffIds)->pluck('staff_id')->all();
@@ -191,7 +195,7 @@ class ActivityEditor
         $warnings = [];
         $returned = false;
 
-        DB::transaction(function () use ($activity, $toAdd, $role, $user, $conflictReasons, $needsAmendment, $amendmentReason, &$warnings, &$returned) {
+        DB::transaction(function () use ($activity, $toAdd, $roleAttributes, $user, $conflictReasons, $needsAmendment, $amendmentReason, &$warnings, &$returned) {
             // Checked under a lock, so two people placing the same officer at once are taken in turn.
             $this->checks->lockStaff($toAdd->keys()->all());
             $busy = $this->checks->unavailableStaff($activity->start_date, $activity->end_date, $activity->id);
@@ -206,10 +210,9 @@ class ActivityEditor
                     'activity_id' => $activity->id,
                     'staff_id' => $person->id,
                     'is_external' => false,
-                    'role' => $role,
                     'status' => ParticipationStatus::Nominated,
                     'conflict_reason' => $conflictReasons[$person->id] ?? null,
-                ]);
+                ] + $roleAttributes);
                 $participant->snapshotFrom($person)->save();
 
                 $flags = $this->checks->fieldDayFlags($person, $activity);
@@ -234,9 +237,12 @@ class ActivityEditor
     }
 
     /**
-     * PT-03 / Q4: a non-staff participant.
+     * PT-03 / Q4: a non-staff participant, with their designation, their own days within the activity
+     * (blank: the whole activity) and, optionally, a payment rate (4 November 2026): a DSA scale's
+     * standard rate, or an amount typed in per night, per day or once. The payment is a computed cost
+     * line (App\Services\DsaCalculator), so it is never typed in twice.
      *
-     * @param  array{external_name: string, external_organisation?: ?string, external_category?: mixed}  $data
+     * @param  array{external_name: string, external_organisation?: ?string, external_category?: mixed, external_designation?: ?string, role_other?: ?string, start_date?: ?string, end_date?: ?string, rate_source?: ?string, rate_grade?: ?string, rate_amount?: ?string, rate_unit?: ?string}  $data
      */
     public function addExternal(Activity $activity, array $data, ParticipantRole $role, User $user, ?string $amendmentReason = null): ActivityParticipant
     {
@@ -247,20 +253,155 @@ class ActivityEditor
             throw new ActivityWorkflowException('Give a reason for changing the team of a submitted or approved activity.');
         }
 
-        return DB::transaction(function () use ($activity, $data, $role, $user, $amendmentReason) {
-            $participant = $activity->participants()->create($data + [
+        $attributes = $this->externalAttributes($activity, $data, $role);
+
+        return DB::transaction(function () use ($activity, $attributes, $user, $amendmentReason) {
+            $participant = $activity->participants()->create($attributes + [
                 'is_external' => true,
-                'role' => $role,
                 'status' => ParticipationStatus::Nominated,
             ]);
-            $this->costing->refresh($activity);
+            $this->dsa->recalculate($activity);
 
             if ($activity->status->requiresAmendment()) {
-                $this->lifecycle->recordAmendment($activity, ActivityAmendment::KIND_PARTICIPANTS, "Added external participant {$data['external_name']}", (string) $amendmentReason, $user, false);
+                $this->lifecycle->recordAmendment($activity, ActivityAmendment::KIND_PARTICIPANTS, "Added external participant {$attributes['external_name']}", (string) $amendmentReason, $user,
+                    $this->lifecycle->costBeyondTolerance($activity));
             }
 
             return $participant;
         });
+    }
+
+    /**
+     * Change an external participant's details, days or payment rate. Their payment line follows.
+     *
+     * @param  array<string, mixed>  $data  as addExternal()
+     * @return bool whether the change sent the activity back to the CEO
+     */
+    public function updateExternal(ActivityParticipant $participant, array $data, ParticipantRole $role, User $user, ?string $amendmentReason = null): bool
+    {
+        $activity = $participant->loadMissing('activity')->activity;
+        $this->authorizeDetails($activity, $user);
+        $this->assertEditable($activity);
+
+        if (! $participant->is_external) {
+            throw new ActivityWorkflowException('Only an external participant\'s details are changed here.');
+        }
+        if ($activity->status->isDelivered()) {
+            throw new ActivityWorkflowException('An external participant\'s days and rate are fixed once the activity is completed.');
+        }
+        if ($activity->status->requiresAmendment() && blank($amendmentReason)) {
+            throw new ActivityWorkflowException('Give a reason for changing the team of a submitted or approved activity.');
+        }
+
+        $attributes = $this->externalAttributes($activity, $data, $role);
+
+        return DB::transaction(function () use ($participant, $activity, $attributes, $user, $amendmentReason) {
+            $before = $activity->estimated_total;
+            $participant->update($attributes);
+            $this->dsa->recalculate($activity);
+
+            return $activity->status->requiresAmendment()
+                && $this->lifecycle->recordAmendment($activity, ActivityAmendment::KIND_PARTICIPANTS, "Changed external participant {$attributes['external_name']}", (string) $amendmentReason, $user,
+                    $this->lifecycle->costBeyondTolerance($activity), ['estimated_total' => $before], ['estimated_total' => $activity->estimated_total]);
+        });
+    }
+
+    /**
+     * Checked and normalised details of an external participant.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function externalAttributes(Activity $activity, array $data, ParticipantRole $role): array
+    {
+        $name = trim((string) ($data['external_name'] ?? ''));
+        if ($name === '') {
+            throw new ActivityWorkflowException('Give the external participant\'s name.');
+        }
+
+        [$start, $end] = $this->ownDates($activity, $data['start_date'] ?? null, $data['end_date'] ?? null);
+        $whole = $start->equalTo($activity->start_date) && $end->equalTo($activity->end_date);
+
+        $rate = ['rate_source' => null, 'rate_amount' => null, 'rate_unit' => null, 'job_grade' => null];
+        $source = (string) ($data['rate_source'] ?? '');
+        if ($source === ActivityParticipant::RATE_DSA) {
+            $grade = DsaRate::normaliseGrade((string) ($data['rate_grade'] ?? ''));
+            if ($grade === null) {
+                throw new ActivityWorkflowException('Choose the DSA scale they are paid at.');
+            }
+            if (! DsaRate::lookup($grade, $start)) {
+                throw new ActivityWorkflowException("There is no DSA rate for scale {$grade} on ".$start->format('d M Y').'. Choose another scale or enter a custom rate.');
+            }
+            $rate = ['rate_source' => ActivityParticipant::RATE_DSA, 'rate_amount' => null, 'rate_unit' => RateUnit::forDsaBasis((string) $this->settings->get('dsa_basis')), 'job_grade' => $grade];
+        } elseif ($source === ActivityParticipant::RATE_CUSTOM) {
+            $unit = RateUnit::tryFrom((string) ($data['rate_unit'] ?? ''));
+            $cents = $this->positiveCents($data['rate_amount'] ?? null, 'Enter the rate amount, more than KES 0.');
+            if (! $unit) {
+                throw new ActivityWorkflowException('Say whether the rate is paid per night, per day or once.');
+            }
+            $rate = ['rate_source' => ActivityParticipant::RATE_CUSTOM, 'rate_amount' => Money::fromCents($cents), 'rate_unit' => $unit, 'job_grade' => null];
+        } elseif ($source !== '') {
+            throw new ActivityWorkflowException('Choose a DSA scale rate, a custom rate, or no payment.');
+        }
+
+        return [
+            'external_name' => mb_substr($name, 0, 255),
+            'external_organisation' => filled($data['external_organisation'] ?? null) ? mb_substr(trim((string) $data['external_organisation']), 0, 255) : null,
+            'external_designation' => filled($data['external_designation'] ?? null) ? mb_substr(trim((string) $data['external_designation']), 0, 255) : null,
+            'external_category' => $data['external_category'] ?? null,
+            'start_date' => $whole ? null : $start,
+            'end_date' => $whole ? null : $end,
+            'days_planned' => $whole ? null : (int) $start->diffInDays($end) + 1,
+        ] + $rate + $this->roleAttributes($role, $data['role_other'] ?? null);
+    }
+
+    /**
+     * A person's own first and last day, inside the activity. Blank means the activity's own date.
+     *
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    private function ownDates(Activity $activity, mixed $start, mixed $end): array
+    {
+        $start = filled($start) ? Carbon::parse($start)->startOfDay() : $activity->start_date->copy();
+        $end = filled($end) ? Carbon::parse($end)->startOfDay() : $activity->end_date->copy();
+
+        if ($end->lt($start)) {
+            throw new ActivityWorkflowException('The completion date cannot be before the start date.');
+        }
+        if ($start->lt($activity->start_date) || $end->gt($activity->end_date)) {
+            throw new ActivityWorkflowException(sprintf('Dates must fall within the activity, %s to %s.', $activity->start_date->format('d M Y'), $activity->end_date->format('d M Y')));
+        }
+
+        return [$start, $end];
+    }
+
+    /**
+     * The role, and the words for Other (specify), which are required.
+     *
+     * @return array{role: ParticipantRole, role_other: ?string}
+     */
+    private function roleAttributes(ParticipantRole $role, ?string $other): array
+    {
+        $other = trim((string) $other);
+        if ($role->requiresDetail() && $other === '') {
+            throw new ActivityWorkflowException('Say what their role is (Other).');
+        }
+
+        return ['role' => $role, 'role_other' => $role->requiresDetail() ? mb_substr($other, 0, 100) : null];
+    }
+
+    private function positiveCents(mixed $amount, string $message): int
+    {
+        try {
+            $cents = Money::toCents(is_numeric($amount) || is_string($amount) ? (string) $amount : null);
+        } catch (\InvalidArgumentException) {
+            throw new ActivityWorkflowException($message);
+        }
+        if ($cents <= 0) {
+            throw new ActivityWorkflowException($message);
+        }
+
+        return $cents;
     }
 
     /**
@@ -274,6 +415,7 @@ class ActivityEditor
     {
         $this->authorizeDetails($activity, $user);
         $this->assertEditable($activity);
+        $roleAttributes = $this->roleAttributes($role, $data['role_other'] ?? null);
 
         $label = trim((string) $data['group_label']);
         $headcount = (int) $data['headcount'];
@@ -291,15 +433,14 @@ class ActivityEditor
             throw new ActivityWorkflowException('Give a reason for changing the team of a submitted or approved activity.');
         }
 
-        return DB::transaction(function () use ($activity, $label, $headcount, $grade, $role, $user, $amendmentReason) {
+        return DB::transaction(function () use ($activity, $label, $headcount, $grade, $roleAttributes, $user, $amendmentReason) {
             $participant = $activity->participants()->create([
                 'is_external' => false,
                 'group_label' => mb_substr($label, 0, 255),
                 'headcount' => $headcount,
                 'job_grade' => $grade,
-                'role' => $role,
                 'status' => ParticipationStatus::Nominated,
-            ]);
+            ] + $roleAttributes);
             $this->dsa->recalculate($activity);
 
             if ($activity->status->requiresAmendment()) {
@@ -444,9 +585,12 @@ class ActivityEditor
     }
 
     /**
-     * CB-02 / CB-03: a planned cost line (travel, venue, …). DSA lines are computed by DsaCalculator.
+     * CB-02 / CB-03: a planned cost line (travel, venue, …). DSA lines and external participants'
+     * payments are computed by DsaCalculator. A line is worked out per person (cost for one person ×
+     * the number of people) or is a fixed amount for the activity (4 November 2026); the method is
+     * kept, so editing the line shows it again.
      *
-     * @param  array{cost_category_id: int, activity_participant_id?: ?int, description?: ?string, estimated_amount: string, travel_mode?: ?string}  $data
+     * @param  array{cost_category_id: int, activity_participant_id?: ?int, description?: ?string, calculation_method?: ?string, unit_rate?: ?string, quantity?: int|string|null, estimated_amount?: ?string, travel_mode?: ?string}  $data
      * @return bool whether the change sent the activity back to the CEO
      */
     public function savePlannedCost(Activity $activity, array $data, User $user, ?ActivityCost $line = null, ?string $amendmentReason = null): bool
@@ -462,7 +606,11 @@ class ActivityEditor
             throw new ActivityWorkflowException('Give a reason for changing the planned cost of a submitted or approved activity.');
         }
 
-        $data['estimated_amount'] = Money::fromCents(Money::toCents($data['estimated_amount']));
+        if (CostCategory::query()->whereKey($data['cost_category_id'] ?? null)->value('code') === DsaCalculator::EXTERNAL_CATEGORY_CODE) {
+            throw new ActivityWorkflowException('An external participant\'s allowance is worked out from the rate on their record. Set their rate on the team instead of adding a cost line.');
+        }
+
+        $data = $this->costAmounts($data);
         $before = $activity->estimated_total;
 
         return DB::transaction(function () use ($activity, $data, $user, $line, $amendmentReason, $before) {
@@ -483,6 +631,40 @@ class ActivityEditor
                 (string) $amendmentReason, $user, $this->lifecycle->costBeyondTolerance($activity),
                 ['estimated_total' => $before], ['estimated_total' => $activity->estimated_total]);
         });
+    }
+
+    /**
+     * The amount of a cost line from its method: per person = cost per person × number of people;
+     * fixed = the amount entered, whatever the number of people.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function costAmounts(array $data): array
+    {
+        $method = CostMethod::tryFrom((string) ($data['calculation_method'] ?? '')) ?? CostMethod::Fixed;
+
+        if ($method === CostMethod::PerPerson) {
+            $unit = $this->positiveCents($data['unit_rate'] ?? null, 'Enter the cost per person, more than KES 0.');
+            $people = filter_var($data['quantity'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 100000]]);
+            if ($people === false) {
+                throw new ActivityWorkflowException('Enter the number of people, at least 1.');
+            }
+
+            return array_merge($data, [
+                'calculation_method' => CostMethod::PerPerson,
+                'unit_rate' => Money::fromCents($unit),
+                'quantity' => $people,
+                'estimated_amount' => Money::fromCents($unit * $people),
+            ]);
+        }
+
+        return array_merge($data, [
+            'calculation_method' => CostMethod::Fixed,
+            'unit_rate' => null,
+            'quantity' => null,
+            'estimated_amount' => Money::fromCents(Money::toCents($data['estimated_amount'] ?? null)),
+        ]);
     }
 
     public function removePlannedCost(ActivityCost $line, User $user, ?string $amendmentReason = null): bool
@@ -597,6 +779,9 @@ class ActivityEditor
     public function authorizeDetails(Activity $activity, User $user): void
     {
         if ($user->can('activities.manage')) {
+            // A memo sent directly to the CEO is not changed by the Chief of Staff or the Assistant before the decision.
+            $this->lifecycle->assertNotReservedForCeo($activity, $user);
+
             return;
         }
 

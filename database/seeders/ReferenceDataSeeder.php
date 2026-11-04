@@ -76,6 +76,14 @@ class ReferenceDataSeeder extends Seeder
         ['Airtime / communication', 'airtime', CostScope::Participant],
         ['Incidentals', 'incidentals', CostScope::Activity],
         ['Other approved costs', 'other', CostScope::Activity],
+        // Computed from an external participant's rate (App\Services\DsaCalculator), never typed in (4 November 2026).
+        ['Allowances (external participants)', 'external_allowance', CostScope::Participant],
+    ];
+
+    /** Added 4 November 2026; "Other" asks for the category in words (activities.category_other). */
+    public const MORE_ACTIVITY_CATEGORIES = [
+        ['Policy and Management', false],
+        ['Other', true],
     ];
 
     public function run(): void
@@ -131,6 +139,12 @@ class ReferenceDataSeeder extends Seeder
                 foreach ($types as $type) {
                     $model->types()->firstOrCreate(['name' => $type]);
                 }
+            }
+        });
+
+        $this->once('activity_categories_policy_and_other', function () {
+            foreach (self::MORE_ACTIVITY_CATEGORIES as [$name, $requiresDetail]) {
+                ActivityCategory::resolveByName($name)?->update(['requires_detail' => $requiresDetail]);
             }
         });
     }

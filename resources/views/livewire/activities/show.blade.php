@@ -13,7 +13,8 @@
     $s = $a->status;
     $sel = Ui::CONTROL.' appearance-none pr-8';
     $can = fn (string $p) => $user->can($p);
-    $editable = ! $s->isReadOnly() && $can('activities.manage');
+    // A memo sent directly to the CEO is read only for the Chief of Staff and the Assistant until the CEO decides (Activity::isReservedForCeo()).
+    $editable = ! $s->isReadOnly() && $can('activities.manage') && ! $reservedForCeo;
     $amend = $s->requiresAmendment();
     $tabs = [
         'overview' => ['icon' => 'fa-circle-info', 'label' => 'Overview', 'count' => 0],
@@ -33,6 +34,7 @@
         @if ($a->is_late_notice)<x-ui.badge classes="bg-amber-50 text-amber-700" icon="fa-clock">Late notice</x-ui.badge>@endif
         @if ($a->is_retrospective)<x-ui.badge classes="bg-red-50 text-red-700" icon="fa-backward">Retrospective</x-ui.badge>@endif
         @if ($a->submission_link_id)<x-ui.badge classes="bg-blue-50 text-blue-700" icon="fa-link">Received via link</x-ui.badge>@endif
+        @if ($a->submission_route)<x-ui.badge :classes="$a->submission_route->badgeClasses()" :icon="$a->submission_route->icon()">{{ $a->submission_route->label() }}</x-ui.badge>@endif
     </x-slot:pills>
 
     <x-slot:actions>
@@ -56,13 +58,13 @@
             <button type="button" wire:click="openDecide('declined')" class="{{ Ui::BTN_DANGER }}"><i class="fa-solid fa-xmark text-xs"></i>Decline</button>
             <button type="button" wire:click="openDecide('approved')" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-check text-xs"></i>Approve and authorise</button>
         @endif
-        @if (in_array($s, [ActivityStatus::Draft, ActivityStatus::AwaitingDecision, ActivityStatus::Returned]) && $can('decisions.record') && ! $can('activities.decide'))
+        @if (in_array($s, [ActivityStatus::Draft, ActivityStatus::AwaitingDecision, ActivityStatus::Returned]) && $can('decisions.record') && ! $can('activities.decide') && ! $a->isDirectToCeo())
             <button type="button" wire:click="$set('showRecordDecision', true)" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-file-signature text-xs"></i>Record CEO decision</button>
         @endif
         @if ($s === ActivityStatus::Approved && $can('activities.execute') && ! $a->start_date->isFuture())
             <button type="button" wire:click="confirmCommencement" wire:loading.attr="disabled" wire:target="confirmCommencement" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-person-walking-luggage text-xs"></i>Confirm commencement</button>
         @endif
-        @if (in_array($s, [ActivityStatus::Approved, ActivityStatus::Postponed, ActivityStatus::AwaitingDecision]) && $can('activities.postpone'))
+        @if (in_array($s, [ActivityStatus::Approved, ActivityStatus::Postponed, ActivityStatus::AwaitingDecision]) && $can('activities.postpone') && ! $reservedForCeo)
             <button type="button" wire:click="$set('showPostpone', true)" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-calendar-xmark text-xs"></i>{{ $s === ActivityStatus::Postponed ? 'Reschedule' : 'Postpone' }}</button>
         @endif
         @if (in_array($s, [ActivityStatus::Approved, ActivityStatus::InProgress]) && $can('activities.execute'))
@@ -97,12 +99,15 @@
     @if ($s->isReadOnly())
         <div class="px-4 py-3 rounded-lg text-sm bg-slate-100 border border-slate-200 text-slate-600"><i class="fa-solid fa-lock mr-2"></i>This activity is {{ strtolower($s->label()) }} and read only.@if ($a->status_reason) Reason: {{ $a->status_reason }}@endif</div>
     @endif
+    @if ($reservedForCeo)
+        <div class="px-4 py-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800"><i class="fa-solid fa-arrow-right-to-bracket mr-2"></i>The Head of Department sent this memo <strong>directly to the CEO</strong>. You can read it, but the Chief of Staff and the Assistant take no part in its review or decision.</div>
+    @endif
     @if ($a->isDepartmentDraft())
         <div class="px-4 py-3 rounded-lg text-sm bg-sky-50 border border-sky-200 text-sky-800"><i class="fa-solid fa-circle-info mr-2"></i>The Head of Department is still preparing this memo. It reaches you when they submit it for review.</div>
     @endif
     @if ($s->isPendingDecision() || $s->isWithDepartment() || $a->reviewNotes->isNotEmpty())
         <x-memo.workflow :activity="$a">
-            @if (($s->isPendingDecision() || $s === ActivityStatus::ReturnedToHod) && $can('memos.review'))
+            @if (($s->isPendingDecision() || $s === ActivityStatus::ReturnedToHod) && $can('memos.review') && ! $reservedForCeo)
                 <x-slot:actions><button type="button" wire:click="$set('showNote', true)" class="{{ Ui::BTN_TINT }}"><i class="fa-solid fa-comment text-[9px]"></i>Add comment</button></x-slot:actions>
             @endif
         </x-memo.workflow>
@@ -133,7 +138,7 @@
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
                     <div class="lg:col-span-2 space-y-4">
                         <dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div><dt class="{{ Ui::MICRO }}">Category · type</dt><dd class="text-sm text-slate-700">{{ $a->category?->name }}{{ $a->type ? ' · '.$a->type->name : '' }}</dd></div>
+                            <div><dt class="{{ Ui::MICRO }}">Category · type</dt><dd class="text-sm text-slate-700">{{ $a->categoryLabel() }}{{ $a->type ? ' · '.$a->type->name : '' }}</dd></div>
                             <div><dt class="{{ Ui::MICRO }}">Source memo</dt><dd class="text-sm text-slate-700 font-numeric">{{ $a->source_reference ?: '—' }}{{ $a->source_received_on ? ', received '.Ui::date($a->source_received_on) : '' }}</dd></div>
                             <div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Objective</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->purpose }}</dd></div>
                             @if ($a->expected_outputs)<div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Expected outputs</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->expected_outputs }}</dd></div>@endif
@@ -190,7 +195,7 @@
                     @if ($editable && ! $s->isDelivered())
                         <div class="flex gap-2">
                             <button type="button" wire:click="$set('showAddGroup', true)" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-people-group text-xs"></i>Add a group by number</button>
-                            <button type="button" wire:click="$set('showAddExternal', true)" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-user-tie text-xs"></i>Add external</button>
+                            <button type="button" wire:click="openExternal" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-user-tie text-xs"></i>Add external</button>
                             <button type="button" wire:click="$set('showAddStaff', true)" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-user-plus text-xs"></i>Add officers</button>
                         </div>
                     @endif
@@ -212,7 +217,7 @@
                                         <td class="{{ Ui::TD }}">
                                             <p class="font-medium text-slate-700">{{ $p->displayName() }}@if ($p->is_external)<x-ui.badge class="ml-1" classes="bg-slate-100 text-slate-500">External</x-ui.badge>@endif</p>
                                             <p class="text-[11px] text-slate-400">
-                                                @if ($p->is_external){{ $p->external_category?->label() }}{{ $p->external_organisation ? ' · '.$p->external_organisation : '' }}
+                                                @if ($p->is_external){{ $p->external_designation ?: $p->external_category?->label() }}{{ $p->external_organisation ? ' · '.$p->external_organisation : '' }}@if ($p->hasPaymentRate())<span class="block text-emerald-700"><i class="fa-solid fa-money-bill-wave mr-1"></i>{{ $p->rateLabel() }}</span>@endif
                                                 @else{{ $p->staff?->staff_number }} · {{ $p->department?->name ?? $p->staff?->department?->name }}{{ $p->job_grade ? ' · '.$p->job_grade : '' }}@endif
                                             </p>
                                             @foreach ($p->releases as $rel)
@@ -232,7 +237,7 @@
                                                 </p>
                                             @endif
                                         </td>
-                                        <td class="{{ Ui::TD }}">{{ $p->role->label() }}</td>
+                                        <td class="{{ Ui::TD }}">{{ $p->roleLabel() }}</td>
                                         <td class="{{ Ui::TD }} font-numeric whitespace-nowrap">
                                             @if ($fd)
                                                 <span class="{{ $fd['over_quarter'] ? 'text-red-600 font-semibold' : '' }}">{{ $fd['quarter'] }}/{{ $fd['quarter_limit'] }}</span> ·
@@ -256,7 +261,9 @@
                                                         <span class="{{ $p->isPartial($a) ? 'text-slate-800 font-semibold' : '' }}">{{ $p->plannedDays($a) }}</span>
                                                         @if ($p->isPartial($a))<p class="text-[11px] text-slate-400">{{ $p->startOn($a)->format('d M') }} – {{ $p->endOn($a)->format('d M') }}</p>@endif
                                                     </div>
-                                                    @if ($editable)
+                                                    @if ($editable && $p->is_external && ! $reservedForCeo)
+                                                        <button type="button" wire:click="openExternal({{ $p->id }})" class="{{ Ui::BTN_ICON }} -mt-1" title="Change {{ $p->displayName() }}'s details, days and rate" aria-label="Change {{ $p->displayName() }}'s details, days and rate"><i class="fa-solid fa-pen text-xs"></i></button>
+                                                    @elseif ($editable && ! $reservedForCeo)
                                                         <button type="button" wire:click="openDays({{ $p->id }})" class="{{ Ui::BTN_ICON }} -mt-1" title="Change {{ $p->displayName() }}'s days" aria-label="Change {{ $p->displayName() }}'s days"><i class="fa-solid fa-calendar-day text-xs"></i></button>
                                                     @endif
                                                 </div>
@@ -298,7 +305,7 @@
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <p class="text-[13px] text-slate-500">DSA is computed from the rate table (one standard rate per scale, per {{ app(\App\Services\AppSettings::class)->get('dsa_basis') === 'days' ? 'day' : 'night' }}). Travel and other costs are entered per participant or for the whole activity.</p>
                     <div class="flex gap-2">
-                        @if ($editable && ! $s->isDelivered())
+                        @if ($editable && ! $s->isDelivered() && ! $reservedForCeo)
                             <button type="button" wire:click="recalculateDsa" wire:loading.attr="disabled" wire:target="recalculateDsa" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-calculator text-xs"></i>Recalculate DSA</button>
                             <button type="button" wire:click="openCost" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-plus text-xs"></i>Add cost</button>
                         @endif
@@ -327,7 +334,8 @@
                                     <tr wire:key="cost-{{ $line->id }}" class="hover:bg-slate-50/60">
                                         <td class="{{ Ui::TD }}">
                                             <p class="font-medium text-slate-700">{{ $line->category?->name }}@if ($line->travel_mode) <span class="text-[11px] text-slate-400">· {{ $line->travel_mode->label() }}</span>@endif</p>
-                                            @if ($line->description)<p class="text-[11px] text-slate-400">{{ $line->description }}</p>@endif
+                                            @if ($line->description)<p class="text-[11px] text-slate-400 break-words">{{ $line->description }}</p>@endif
+                                            @if ($line->calculationLabel())<p class="text-[11px] text-slate-500 font-numeric">Per person: {{ $line->calculationLabel() }}</p>@elseif (! $line->is_computed)<p class="text-[11px] text-slate-400">Fixed amount</p>@endif
                                             @if ($line->isOverridden())<p class="text-[11px] text-amber-700"><i class="fa-solid fa-pen-to-square mr-1"></i>Overridden from {{ Money::format(Money::toCents($line->computed_amount)) }}: {{ $line->override_reason }}</p>@endif
                                         </td>
                                         <td class="{{ Ui::TD }}">{{ $line->participant?->displayName() ?? 'Whole activity (shared)' }}</td>
@@ -681,9 +689,13 @@
                 <option value="name">By name</option>
                 <option value="fewest">Fewest field days first</option>
             </select>
-            <select wire:model="role" class="{{ $sel }} lg:w-44 shrink-0" aria-label="Role for the people added">
-                @foreach (ParticipantRole::cases() as $r)<option value="{{ $r->value }}">Add as {{ $r->label() }}</option>@endforeach
-            </select>
+            <div class="flex flex-col sm:flex-row gap-2 shrink-0" x-data="{ role: $wire.entangle('role') }">
+                <select x-model="role" class="{{ $sel }} lg:w-44" aria-label="Role for the people added">
+                    @foreach (ParticipantRole::cases() as $r)<option value="{{ $r->value }}">Add as {{ $r->label() }}</option>@endforeach
+                </select>
+                <input x-show="role === '{{ ParticipantRole::Other->value }}'" x-cloak type="text" wire:model="roleOther" maxlength="100" class="{{ Ui::CONTROL }} lg:w-44" placeholder="Specify the role" aria-label="Specify the role">
+            </div>
+            @error('roleOther')<p class="text-xs text-red-600" role="alert">{{ $message }}</p>@enderror
         </div>
 
         {{-- Bulk actions --}}
@@ -783,22 +795,10 @@
         :subtitle="'Within the activity, '.Ui::dateRange($a->start_date, $a->end_date).'. DSA follows this person\'s own nights.'">
         <div class="grid grid-cols-2 gap-4">
             <x-ui.field label="First day" for="pd-s" error="daysStart" required><input id="pd-s" type="date" wire:model.live="daysStart" min="{{ $a->start_date->toDateString() }}" max="{{ $a->end_date->toDateString() }}" class="{{ Ui::CONTROL }}"></x-ui.field>
-            <x-ui.field label="Number of days" for="pd-n" error="daysCount" required><input id="pd-n" type="number" min="1" max="{{ $a->days }}" wire:model.live="daysCount" class="{{ Ui::CONTROL }} font-numeric"></x-ui.field>
+            <x-ui.field label="Last day" for="pd-e" error="daysEnd" required><input id="pd-e" type="date" wire:model.live="daysEnd" min="{{ $daysStart ?: $a->start_date->toDateString() }}" max="{{ $a->end_date->toDateString() }}" class="{{ Ui::CONTROL }}"></x-ui.field>
         </div>
-        @php
-            $pdStart = $daysStart ? \Illuminate\Support\Carbon::parse($daysStart) : null;
-            $pdEnd = $pdStart && $daysCount >= 1 ? $pdStart->copy()->addDays($daysCount - 1) : null;
-            $pdOver = $pdEnd && $pdEnd->gt($a->end_date);
-        @endphp
-        <div class="rounded-lg border px-3 py-2.5 {{ $pdOver ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50' }}" aria-live="polite">
-            <p class="{{ Ui::MICRO }}">Last day · nights</p>
-            <p class="text-[13px] font-bold font-numeric {{ $pdOver ? 'text-amber-800' : 'text-emerald-800' }}">
-                {{ $pdEnd ? Ui::date($pdEnd).' · '.\App\Support\DsaPeriod::nightsFor($daysCount).' '.Str::plural('night', \App\Support\DsaPeriod::nightsFor($daysCount)) : '—' }}
-                <span class="font-normal text-slate-500">of {{ $a->days }} activity days</span>
-            </p>
-            @if ($pdOver)<p class="text-[11px] text-amber-800 mt-0.5">Runs past the activity's last day, {{ Ui::date($a->end_date) }}.</p>@endif
-        </div>
-        <button type="button" wire:click="$set('daysStart', '{{ $a->start_date->toDateString() }}')" class="{{ Ui::BTN_TINT }} w-fit">Start on the activity's first day</button>
+        <x-memo.days-summary :start="$daysStart" :end="$daysEnd" :activity="$a" />
+        <button type="button" x-on:click="$wire.set('daysStart', '{{ $a->start_date->toDateString() }}', false); $wire.set('daysEnd', '{{ $a->end_date->toDateString() }}')" class="{{ Ui::BTN_TINT }} w-fit">The whole activity</button>
         @if ($daysOverlap->isNotEmpty())
             <div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-[12px] text-red-700" role="alert">
                 <i class="fa-solid fa-triangle-exclamation mr-1"></i>On these days {{ $editingDays?->displayName() }} is also on {{ $daysOverlap->map(fn ($o) => $o->reference.' ('.Ui::dateRange($o->start_date, $o->end_date).')')->implode(', ') }}.
@@ -910,17 +910,12 @@
         </x-slot:footer>
     </x-ui.modal>
 
-    <x-ui.modal show="showAddExternal" :open="$showAddExternal" size="slim" icon="fa-user-tie" title="Add an external participant" subtitle="Someone who is not Board staff, e.g. an MP or NGCDFC member.">
-        <x-ui.field label="Name" for="ext-n" error="externalName" required><input id="ext-n" type="text" wire:model="externalName" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
-        <x-ui.field label="Organisation" for="ext-o" error="externalOrganisation"><input id="ext-o" type="text" wire:model="externalOrganisation" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
-        <div class="grid grid-cols-2 gap-4">
-            <x-ui.field label="Category" for="ext-c" error="externalCategory"><select id="ext-c" wire:model="externalCategory" class="{{ $sel }}">@foreach (ExternalCategory::cases() as $e)<option value="{{ $e->value }}">{{ $e->label() }}</option>@endforeach</select></x-ui.field>
-            <x-ui.field label="Role" for="ext-r" error="role"><select id="ext-r" wire:model="role" class="{{ $sel }}">@foreach (ParticipantRole::cases() as $r)<option value="{{ $r->value }}">{{ $r->label() }}</option>@endforeach</select></x-ui.field>
-        </div>
+    <x-ui.modal show="showAddExternal" :open="$showAddExternal" size="medium" icon="fa-user-tie" :title="$externalId ? 'Change the external participant' : 'Add an external participant'" subtitle="Someone who is not Board staff, e.g. an MP, an NGCDFC member or a consultant.">
+        <x-memo.external-fields :activity="$a" :categories="ExternalCategory::cases()" :grades="$grades" :rateUnits="$rateUnits" :dsaUnit="$dsaUnit" />
         @if ($amend)<x-ui.field label="Reason for the change" for="ext-why" error="reason" required><input id="ext-why" type="text" wire:model="reason" class="{{ Ui::CONTROL }}"></x-ui.field>@endif
         <x-slot:footer>
             <button type="button" wire:click="$set('showAddExternal', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
-            <button type="button" wire:click="addExternal" wire:loading.attr="disabled" wire:target="addExternal" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-plus text-xs"></i>Add</button>
+            <button type="button" wire:click="addExternal" wire:loading.attr="disabled" wire:target="addExternal" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-floppy-disk text-xs"></i>{{ $externalId ? 'Save' : 'Add' }}</button>
         </x-slot:footer>
     </x-ui.modal>
 
@@ -930,7 +925,7 @@
             <x-ui.field label="Number" for="grp-n" error="groupCount" required><input id="grp-n" type="number" min="1" max="500" wire:model="groupCount" class="{{ Ui::CONTROL }} font-numeric" placeholder="10"></x-ui.field>
             <x-ui.field label="DSA scale" for="grp-g" error="groupGrade" required><select id="grp-g" wire:model="groupGrade" class="{{ $sel }}"><option value="">Choose…</option>@foreach (\App\Models\DsaRate::grades() as $g)<option value="{{ $g }}">{{ $g === 'INTERN' ? 'INTERN (attachees)' : 'Scale '.$g }}</option>@endforeach</select></x-ui.field>
         </div>
-        <x-ui.field label="Role" for="grp-r" error="role"><select id="grp-r" wire:model="role" class="{{ $sel }}">@foreach (ParticipantRole::cases() as $r)<option value="{{ $r->value }}">{{ $r->label() }}</option>@endforeach</select></x-ui.field>
+        <x-memo.role-select id="grp-r" />
         @if ($amend)<x-ui.field label="Reason for the change" for="grp-why" error="reason" required><input id="grp-why" type="text" wire:model="reason" class="{{ Ui::CONTROL }}"></x-ui.field>@endif
         <p class="text-[12px] text-slate-500">Nobody is named, so availability and field days are not checked for them.</p>
         <x-slot:footer>
@@ -947,7 +942,7 @@
         </x-slot:footer>
     </x-ui.modal>
 
-    <x-ui.modal show="showCost" :open="$showCost" icon="fa-coins" :title="$costId ? 'Edit planned cost' : 'Add a planned cost'" subtitle="Per participant (air fare, public transport) or for the whole activity (fuel, venue).">
+    <x-ui.modal show="showCost" :open="$showCost" icon="fa-coins" :title="$costId ? 'Edit planned cost' : 'Add a planned cost'" subtitle="For one participant (air fare) or the whole activity (fuel, venue); worked out per person or as a fixed amount.">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <x-ui.field label="Cost type" for="ct-c" error="costCategoryId" required>
                 <select id="ct-c" wire:model.live="costCategoryId" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($costCategories->where('code', '!=', 'dsa') as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select>
@@ -955,11 +950,11 @@
             <x-ui.field label="For" for="ct-p" error="costParticipantId">
                 <select id="ct-p" wire:model="costParticipantId" class="{{ $sel }}"><option value="">Whole activity (shared)</option>@foreach ($a->participants as $p)<option value="{{ $p->id }}">{{ $p->displayName() }}</option>@endforeach</select>
             </x-ui.field>
-            <x-ui.field label="Planned amount (KES)" for="ct-a" error="costAmount" required><input id="ct-a" type="text" inputmode="decimal" wire:model="costAmount" placeholder="0.00" class="{{ Ui::CONTROL }} font-numeric"></x-ui.field>
             <x-ui.field label="Travel mode" for="ct-t" error="costTravelMode">
                 <select id="ct-t" wire:model="costTravelMode" class="{{ $sel }}"><option value="">Not travel</option>@foreach (TravelMode::cases() as $t)<option value="{{ $t->value }}">{{ $t->label() }}</option>@endforeach</select>
             </x-ui.field>
-            <x-ui.field label="Description" for="ct-d" error="costDescription" class="sm:col-span-2"><input id="ct-d" type="text" wire:model="costDescription" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
+            <x-ui.field label="Description" for="ct-d" error="costDescription"><input id="ct-d" type="text" wire:model="costDescription" maxlength="255" class="{{ Ui::CONTROL }}" placeholder="e.g. Lunch"></x-ui.field>
+            <x-memo.cost-method class="sm:col-span-2" :headcount="$a->staff_count + $a->external_count" />
             @if ($amend)<x-ui.field label="Reason for the change" for="ct-r" error="reason" required class="sm:col-span-2"><input id="ct-r" type="text" wire:model="reason" class="{{ Ui::CONTROL }}"></x-ui.field>@endif
         </div>
         <x-slot:footer>

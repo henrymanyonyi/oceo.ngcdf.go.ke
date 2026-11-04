@@ -132,10 +132,15 @@ class ActivityAlert extends Notification
                 : "Memo {$activity->reference}, prepared by an officer at your request, has been submitted to you.", 'Please review it, then forward it to the Chief of Staff, return it to the officer or decline it.');
     }
 
-    public static function returnedForCorrection(Activity $activity): self
+    /** $byCeo: a memo sent directly to the CEO, returned by the CEO; it is resubmitted to the CEO. */
+    public static function returnedForCorrection(Activity $activity, bool $byCeo = false): self
     {
-        return (new self('returned_for_correction', "Returned for correction, please revise and resubmit: {$activity->title}", $activity->id, 'fa-reply'))
-            ->needsAction($activity->reference, "Memo {$activity->reference} returned for correction", "Memo {$activity->reference} has been returned to you for correction.", 'Please make the changes asked for and resubmit it for review.');
+        return (new self('returned_for_correction', ($byCeo ? 'Returned by the CEO for correction' : 'Returned for correction').", please revise and resubmit: {$activity->title}", $activity->id, 'fa-reply'))
+            ->needsAction($activity->reference, "Memo {$activity->reference} returned for correction", $byCeo
+                ? "Memo {$activity->reference} has been returned to you by the CEO for correction."
+                : "Memo {$activity->reference} has been returned to you for correction.", $byCeo
+                ? 'Please make the changes asked for and resubmit it to the CEO.'
+                : 'Please make the changes asked for and resubmit it for review.');
     }
 
     public static function forwardedToOffice(Activity $activity, ReviewOffice $office): self
@@ -197,13 +202,13 @@ class ActivityAlert extends Notification
             : $instruction->kind->office();
     }
 
-    /** To an officer whose FAPM access was changed (App\Services\StaffChanges). */
+    /** To an officer whose OCEO access was changed (App\Services\StaffChanges). */
     public static function accessChanged(?string $role, ?Department $department): self
     {
         $what = $role === null ? 'no longer has a role' : 'is now '.(User::ROLES[$role] ?? $role).($role === User::ROLE_HOD && $department ? ', '.$department->name : '');
 
-        return (new self('access_changed', "Your FAPM access has changed: your account {$what}.", null, 'fa-user-shield', route('home')))
-            ->needsAction(null, 'Your FAPM access has changed', 'Your FAPM access was changed on '.now()->format('d M Y').'.', 'Please sign in again to see what you can now do.');
+        return (new self('access_changed', "Your OCEO access has changed: your account {$what}.", null, 'fa-user-shield', route('home')))
+            ->needsAction(null, 'Your OCEO access has changed', 'Your OCEO access was changed on '.now()->format('d M Y').'.', 'Please sign in again to see what you can now do.');
     }
 
     /** To the officer who scheduled a change of position or access that could not be applied on its date. In the app only. */

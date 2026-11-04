@@ -2,21 +2,56 @@
 
 namespace App\Enums;
 
-/** FRD PT-02. */
+/**
+ * FRD PT-02. A participant's role on the activity, in the order the choices
+ * are offered (4 November 2026). Other asks for the role in words
+ * (activity_participants.role_other; ActivityParticipant::roleLabel()).
+ */
 enum ParticipantRole: string
 {
-    case Lead = 'lead';
-    case Member = 'member';
-    case Driver = 'driver';
+    case Director = 'director';
+    case Ceo = 'ceo';
+    case Hod = 'hod';
+    case Officer = 'officer';
     case Support = 'support';
+    case Driver = 'driver';
+    case Other = 'other';
+    case Member = 'member';
+    case Lead = 'lead';
 
     public function label(): string
     {
         return match ($this) {
-            self::Lead => 'Team lead',
-            self::Member => 'Member',
-            self::Driver => 'Driver',
+            self::Director => 'Director',
+            self::Ceo => 'CEO',
+            self::Hod => 'HOD',
+            self::Officer => 'Officer',
             self::Support => 'Support staff',
+            self::Driver => 'Driver',
+            self::Other => 'Other (specify)',
+            self::Member => 'Member',
+            self::Lead => 'Team lead',
+        };
+    }
+
+    /** Asks for the role in words. */
+    public function requiresDetail(): bool
+    {
+        return $this === self::Other;
+    }
+
+    /** Where the role sorts in the memo's participant list: the most senior first. */
+    public function rank(): int
+    {
+        return match ($this) {
+            self::Ceo => 0,
+            self::Director => 1,
+            self::Hod => 2,
+            self::Lead => 3,
+            self::Officer, self::Member => 4,
+            self::Other => 5,
+            self::Support => 6,
+            self::Driver => 7,
         };
     }
 
@@ -35,9 +70,11 @@ enum ParticipantRole: string
         }
 
         return match ($value) {
-            'team leader', 'leader', 'head' => self::Lead,
-            'participant', 'officer' => self::Member,
-            'support' => self::Support,
+            'team leader', 'leader' => self::Lead,
+            'head', 'head of department', 'head of dept' => self::Hod,
+            'chief executive officer' => self::Ceo,
+            'participant' => self::Member,
+            'support', 'support staff' => self::Support,
             default => null,
         };
     }

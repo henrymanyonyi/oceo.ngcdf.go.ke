@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\RateUnit;
 use App\Models\Activity;
 use App\Models\ActivityCost;
 use App\Models\ActivityParticipant;
@@ -27,10 +28,23 @@ use Illuminate\Support\Facades\DB;
  * Each staff participant gets at most one computed DSA line. An amount the
  * Chief of Staff has overridden is kept (with its logged reason); only the
  * computed figure beside it is refreshed.
+ *
+ * External participants with a payment rate (4 November 2026) get one computed
+ * line in the external allowance cost type: a DSA scale's standard rate (per
+ * night, or per day on the "days" basis) or a custom amount per night, per day
+ * or once, × their own payable nights or days (the same DsaPeriod rule). It is
+ * paid whatever the location, as the rate was chosen for them; a manual cost
+ * line of that type is refused (ActivityEditor), so it is never counted twice.
  */
 class DsaCalculator
 {
     public const CATEGORY_CODE = 'dsa';
+
+    /** The cost type of external participants' computed payments. */
+    public const EXTERNAL_CATEGORY_CODE = 'external_allowance';
+
+    /** Cost types the system works out, never typed in as a cost line by a department. */
+    public const COMPUTED_CODES = [self::CATEGORY_CODE, self::EXTERNAL_CATEGORY_CODE];
 
     public function __construct(private AppSettings $settings, private ActivityCosting $costing) {}
 
@@ -133,10 +147,100 @@ class DsaCalculator
                 $line->save();
             }
 
+            $this->externalPayments($activity, $warnings);
+
             $this->costing->refresh($activity);
         });
 
         return $warnings;
+    }
+
+    /**
+     * The computed payment line of each external participant with a rate; removed when the rate is.
+     *
+     * @param  list<string>  $warnings
+     */
+    private function externalPayments(Activity $activity, array &$warnings): void
+    {
+        $category = CostCategory::query()->where('code', self::EXTERNAL_CATEGORY_CODE)->first();
+
+        foreach ($activity->participants->where('is_external', true) as $participant) {
+            $line = $category ? ActivityCost::query()
+                ->where('activity_id', $activity->id)
+                ->where('activity_participant_id', $participant->id)
+                ->where('cost_category_id', $category->id)
+                ->where('is_computed', true)
+                ->first() : null;
+
+            if (! $participant->hasPaymentRate()) {
+                $line?->delete();
+
+                continue;
+            }
+            if (! $category) {
+                $warnings[] = 'The external allowance cost type is missing from Settings, so external participants\' payments were not calculated.';
+
+                return;
+            }
+
+            $period = DsaPeriod::of($participant->startOn($activity), max(1, $participant->plannedDays($activity)));
+            $rateId = null;
+            if ($participant->rate_source === ActivityParticipant::RATE_DSA) {
+                $unit = RateUnit::forDsaBasis((string) $this->settings->get('dsa_basis'));
+                $rate = DsaRate::lookup($participant->job_grade, $activity->start_date);
+                if (! $rate) {
+                    $warnings[] = sprintf('No DSA rate for %s (scale %s).', $participant->displayName(), $participant->job_grade ?: 'not set');
+
+                    continue;
+                }
+                $amount = Money::toCents($rate->amount);
+                $rateId = $rate->id;
+                $source = 'DSA scale '.$participant->job_grade;
+                if ($participant->rate_unit !== $unit) {
+                    $participant->forceFill(['rate_unit' => $unit])->saveQuietly();
+                }
+            } else {
+                $unit = $participant->rate_unit ?? RateUnit::Night;
+                $amount = Money::toCents($participant->rate_amount);
+                $source = 'Custom rate';
+            }
+
+            $units = $unit->units($period);
+            if ($units === 0) {
+                $warnings[] = "{$participant->displayName()} is paid per night, and a same-day activity pays no night, so their payment is KES 0.00.";
+            }
+            $computed = Money::fromCents($amount * $units);
+            $description = $unit === RateUnit::Once
+                ? sprintf('%s, once × %s', $source, Money::format($amount))
+                : sprintf('%s, %d %s × %s', $source, $units, $unit->plural($units), Money::format($amount));
+
+            $values = [
+                'description' => $description,
+                'quantity' => $units,
+                'unit_rate' => Money::fromCents($amount),
+                'dsa_rate_id' => $rateId,
+                'computed_amount' => $computed,
+            ];
+
+            if (! $line) {
+                $activity->costs()->create($values + [
+                    'cost_category_id' => $category->id,
+                    'activity_participant_id' => $participant->id,
+                    'estimated_amount' => $computed,
+                    'is_computed' => true,
+                    'recorded_by' => Auth::id(),
+                ]);
+
+                continue;
+            }
+
+            $wasOverridden = $line->isOverridden();
+            $line->fill($values);
+            if (! $wasOverridden) {
+                $line->estimated_amount = $computed;
+            }
+            $line->save();
+        }
     }
 
     /** CB-01: override a computed amount with a mandatory, logged justification. */

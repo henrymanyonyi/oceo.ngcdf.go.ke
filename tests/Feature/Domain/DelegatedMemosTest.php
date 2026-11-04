@@ -22,6 +22,7 @@ use App\Services\MemoTracker;
 use App\Services\SubmissionLinkService;
 use Database\Seeders\SettingsSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
@@ -274,7 +275,7 @@ it('takes the officer through the memo page: code, details, team, cost and submi
     $page->set('code', codeFrom($this->sms))->call('verify')->assertHasNoErrors()
         ->assertSee('The Kisumu network visits')
         ->set('title', $details['title'])->set('purpose', $details['purpose'])->set('justification', $details['justification'])
-        ->set('activity_category_id', (string) $details['activity_category_id'])->set('start_date', $details['start_date'])->set('days', 3)
+        ->set('activity_category_id', (string) $details['activity_category_id'])->set('start_date', $details['start_date'])->set('end_date', Carbon::parse($details['start_date'])->addDays(2)->toDateString())
         ->set('county_id', (string) $details['county_id'])->set('venue', $details['venue'])
         ->call('save')->assertHasNoErrors()
         ->assertSee('2. The team')
@@ -284,7 +285,7 @@ it('takes the officer through the memo page: code, details, team, cost and submi
         ->assertSee('Preview the memo')
         ->assertSee('DSA 4 nights')
         // Changing the days saves at once and recalculates the allowances: 5 days pay 6 nights.
-        ->set('days', 5)->assertHasNoErrors()->assertSee('DSA 6 nights')
+        ->set('end_date', Carbon::parse($details['start_date'])->addDays(4)->toDateString())->assertHasNoErrors()->assertSee('DSA 6 nights')
         ->set('confirmSubmit', true)->call('submit')->assertSee('Submitted');
 
     $memo = SubmissionLink::query()->delegated()->sole()->memo;

@@ -48,15 +48,16 @@
                 <x-ui.card title="1. The memo" padded>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <x-ui.field label="Title" for="mr-t" error="title" required class="sm:col-span-2"><input id="mr-t" type="text" wire:model="title" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
-                        <x-ui.field label="Category" for="mr-c" error="activity_category_id" required><select id="mr-c" wire:model.live="activity_category_id" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($categories as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
+                        <x-ui.field label="Category" for="mr-c" error="activity_category_id" required><select id="mr-c" wire:model.live="activity_category_id" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($categories as $c)<option value="{{ $c->id }}">{{ $c->optionLabel() }}</option>@endforeach</select></x-ui.field>
+                        @if ($needsCategoryDetail)<x-ui.field label="Specify the category" for="mr-co2" error="category_other" required><input id="mr-co2" type="text" wire:model="category_other" maxlength="150" class="{{ Ui::CONTROL }}"></x-ui.field>@endif
                         <x-ui.field label="Activity type" for="mr-ty" error="activity_type_id"><select id="mr-ty" wire:model="activity_type_id" class="{{ $sel }}" @disabled($types->isEmpty())><option value="">Choose…</option>@foreach ($types as $t)<option value="{{ $t->id }}">{{ $t->name }}</option>@endforeach</select></x-ui.field>
                         <x-ui.field label="Purpose (objective)" for="mr-p" error="purpose" required class="sm:col-span-2"><textarea id="mr-p" wire:model="purpose" rows="2" class="{{ Ui::CONTROL }}"></textarea></x-ui.field>
                         <x-ui.field label="Introduction and justification" for="mr-j" error="justification" required class="sm:col-span-2" hint="The background, why the activity is needed now, and any letter or Act it answers."><textarea id="mr-j" wire:model="justification" rows="4" class="{{ Ui::CONTROL }}"></textarea></x-ui.field>
                         <x-ui.field label="Expected outcomes and deliverables" for="mr-o" error="expected_outputs" class="sm:col-span-2"><textarea id="mr-o" wire:model="expected_outputs" rows="2" class="{{ Ui::CONTROL }}"></textarea></x-ui.field>
                         <x-ui.field label="Key risks to be mitigated" for="mr-r" error="risks" class="sm:col-span-2"><textarea id="mr-r" wire:model="risks" rows="2" class="{{ Ui::CONTROL }}"></textarea></x-ui.field>
                         <x-ui.field label="Participants and stakeholders" for="mr-a" error="target_audience" class="sm:col-span-2"><input id="mr-a" type="text" wire:model="target_audience" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
-                        <x-ui.field label="Planned start" for="mr-sd" error="start_date" required><input id="mr-sd" type="date" wire:model.live="start_date" min="{{ today()->toDateString() }}" class="{{ Ui::CONTROL }}"></x-ui.field>
-                        <x-ui.field label="Number of days" for="mr-days" error="days" required :hint="$endDate ? 'Ends '.Ui::date($endDate) : null"><input id="mr-days" type="number" min="1" max="120" wire:model.live.debounce.700ms="days" class="{{ Ui::CONTROL }} font-numeric"><span wire:loading wire:target="days,start_date" class="text-[11px] text-slate-400">Recalculating…</span></x-ui.field>
+                        <x-ui.field label="Planned start date" for="mr-sd" error="start_date" required><input id="mr-sd" type="date" wire:model.live="start_date" min="{{ today()->toDateString() }}" class="{{ Ui::CONTROL }}"></x-ui.field>
+                        <x-ui.field label="Expected completion date" for="mr-ed" error="end_date" required :hint="$period ? $period->days.' '.Str::plural('day', $period->days).' · '.$period->nights().' '.Str::plural('night', $period->nights()).($period->departure() ? ', including the departure night' : ', same day') : null"><input id="mr-ed" type="date" wire:model.live="end_date" min="{{ $start_date ?: today()->toDateString() }}" class="{{ Ui::CONTROL }}"><span wire:loading wire:target="end_date,start_date" class="text-[11px] text-slate-400">Recalculating…</span></x-ui.field>
                         <x-ui.field label="County" for="mr-co" error="county_id" hint="Needed for allowances (DSA) when officers travel."><select id="mr-co" wire:model.live="county_id" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($counties as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
                         <x-ui.field label="Constituency" for="mr-k" error="constituency_id"><select id="mr-k" wire:model="constituency_id" class="{{ $sel }}" @disabled($constituencies->isEmpty())><option value="">Any</option>@foreach ($constituencies as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
                         <x-ui.field label="Venue" for="mr-v" error="venue" required><input id="mr-v" type="text" wire:model="venue" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
@@ -73,7 +74,7 @@
                         <ul class="divide-y divide-slate-100 mb-4 border border-slate-100 rounded-lg">
                             @foreach ($memo->participants as $p)
                                 <li class="px-3 py-2 flex items-center justify-between gap-3 text-[13px]" wire:key="mp-{{ $p->id }}">
-                                    <span><span class="font-semibold text-slate-700">{{ $p->displayName() }}</span> <span class="text-slate-400">· {{ $p->role->label() }}</span></span>
+                                    <span><span class="font-semibold text-slate-700">{{ $p->displayName() }}</span> <span class="text-slate-400">· {{ $p->roleLabel() }}</span></span>
                                     <button type="button" wire:click="removeParticipant({{ $p->id }})" class="{{ Ui::BTN_ICON_DANGER }}" aria-label="Remove {{ $p->displayName() }}"><i class="fa-solid fa-trash-can text-xs"></i></button>
                                 </li>
                             @endforeach
@@ -81,10 +82,14 @@
                     @endif
                     <div class="flex flex-col sm:flex-row gap-2">
                         <input type="search" wire:model.live.debounce.300ms="staffSearch" class="{{ Ui::CONTROL }}" placeholder="Search the staff list by name or PF number…" aria-label="Search staff">
-                        <select wire:model="role" class="{{ $sel }} sm:w-40" aria-label="Role">@foreach ($roles as $r)<option value="{{ $r->value }}">{{ $r->label() }}</option>@endforeach</select>
+                        <div class="flex flex-col sm:flex-row gap-2 shrink-0" x-data="{ role: $wire.entangle('role') }">
+                            <select x-model="role" class="{{ $sel }} sm:w-40" aria-label="Role">@foreach ($roles as $r)<option value="{{ $r->value }}">{{ $r->label() }}</option>@endforeach</select>
+                            <input x-show="role === 'other'" x-cloak type="text" wire:model="roleOther" maxlength="100" class="{{ Ui::CONTROL }} sm:w-40" placeholder="Specify the role" aria-label="Specify the role">
+                        </div>
                         <button type="button" wire:click="addOfficers" class="{{ Ui::BTN_PRIMARY }}" wire:loading.attr="disabled" wire:target="addOfficers">Add to team</button>
                     </div>
                     @error('picked')<p class="text-xs text-red-600 mt-1" role="alert">{{ $message }}</p>@enderror
+                    @error('roleOther')<p class="text-xs text-red-600 mt-1" role="alert">{{ $message }}</p>@enderror
                     @if ($matches->isNotEmpty())
                         <ul class="mt-2 max-h-56 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
                             @foreach ($matches as $s)
@@ -104,19 +109,19 @@
                         <ul class="divide-y divide-slate-100 mb-4 border border-slate-100 rounded-lg">
                             @foreach ($memo->costs as $c)
                                 <li class="px-3 py-2 flex items-center justify-between gap-3 text-[13px]" wire:key="mc-{{ $c->id }}">
-                                    <span><span class="font-semibold text-slate-700">{{ $c->category?->name }}</span> <span class="text-slate-400">· {{ $c->participant?->displayName() ?? 'Whole activity' }}{{ $c->description ? ' · '.$c->description : '' }}</span></span>
+                                    <span><span class="font-semibold text-slate-700">{{ $c->category?->name }}</span> <span class="text-slate-400">· {{ $c->participant?->displayName() ?? 'Whole activity' }}{{ $c->description ? ' · '.$c->description : '' }}{{ $c->calculationLabel() ? ' · '.$c->calculationLabel() : '' }}</span></span>
                                     <span class="flex items-center gap-2"><x-ui.money :value="Money::toCents($c->estimated_amount)" />@unless ($c->is_computed)<button type="button" wire:click="removeCost({{ $c->id }})" class="{{ Ui::BTN_ICON_DANGER }}" aria-label="Remove cost line"><i class="fa-solid fa-trash-can text-xs"></i></button>@endunless</span>
                                 </li>
                             @endforeach
                             <li class="px-3 py-2 flex justify-between text-[13px] font-semibold bg-slate-50"><span>Total</span><x-ui.money :value="$memo->costs->sum(fn ($c) => Money::toCents($c->estimated_amount))" /></li>
                         </ul>
                     @endif
-                    <div class="grid grid-cols-1 sm:grid-cols-4 gap-2 items-start">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-start">
                         <x-ui.field label="Cost type" for="mc-c" error="costCategory"><select id="mc-c" wire:model="costCategory" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($costCategories as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
                         <x-ui.field label="For" for="mc-p" error="costParticipant"><select id="mc-p" wire:model="costParticipant" class="{{ $sel }}"><option value="">The whole activity</option>@foreach ($memo->participants as $p)<option value="{{ $p->id }}">{{ $p->displayName() }}</option>@endforeach</select></x-ui.field>
                         <x-ui.field label="Description" for="mc-d" error="costDescription"><input id="mc-d" type="text" wire:model="costDescription" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
-                        <x-ui.field label="Amount (KES)" for="mc-a" error="costAmount"><input id="mc-a" type="text" inputmode="decimal" wire:model="costAmount" class="{{ Ui::CONTROL }} font-numeric"></x-ui.field>
                     </div>
+                    <x-memo.cost-method class="mt-3" :headcount="$memo->staff_count + $memo->external_count" />
                     <div class="flex justify-end mt-2"><button type="button" wire:click="addCost" class="{{ Ui::BTN_TINT }}" wire:loading.attr="disabled" wire:target="addCost"><i class="fa-solid fa-plus text-[9px]"></i>Add cost line</button></div>
                 </x-ui.card>
 

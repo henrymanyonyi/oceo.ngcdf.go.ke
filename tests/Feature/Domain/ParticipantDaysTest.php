@@ -11,7 +11,6 @@ use App\Services\ActivityLifecycle;
 use App\Services\Analytics;
 use App\Services\ParticipantChecks;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 
@@ -112,7 +111,7 @@ it('moves participants\' own dates when the activity is postponed', function () 
         ->and($p->fresh()->plannedDays($activity->fresh()))->toBe(3);
 });
 
-it('changes a participant\'s days from the team tab by first day and number of days', function () {
+it('changes a participant\'s days from the team tab by first and last day', function () {
     $cos = chiefOfStaff();
     $activity = longActivity();
     $p = $activity->participants()->first();
@@ -121,20 +120,22 @@ it('changes a participant\'s days from the team tab by first day and number of d
     Livewire::actingAs($cos)->test(Show::class, ['activity' => $activity])
         ->call('openDays', $p->id)
         ->assertSet('daysStart', $day(0))
-        ->assertSet('daysCount', 35)
+        ->assertSet('daysEnd', $day(34))
         ->set('daysStart', $day(20))
-        ->set('daysCount', 20) // would end after the activity
-        ->assertSee('Runs past the activity')
+        ->set('daysEnd', $day(39)) // after the activity
+        ->assertSee('Outside the activity')
         ->call('saveDays')
-        ->assertHasErrors('daysCount')
-        ->set('daysCount', '')
+        ->assertHasErrors(['daysEnd' => 'before_or_equal'])
+        ->set('daysEnd', $day(19)) // before the first day
+        ->assertSee('The last day is before the first day')
         ->call('saveDays')
-        ->assertHasErrors('daysCount')
-        ->set('daysCount', 3)
-        ->assertSee(Carbon::parse($day(22))->format('d M Y'))
+        ->assertHasErrors(['daysEnd' => 'after_or_equal'])
+        ->set('daysEnd', $day(22))
+        ->assertSee('3 days · 4 nights')
         ->call('saveDays')
         ->assertHasNoErrors();
 
     expect($p->fresh()->plannedDays($activity))->toBe(3)
+        ->and($p->fresh()->start_date->toDateString())->toBe($day(20))
         ->and($p->fresh()->end_date->toDateString())->toBe($day(22));
 });

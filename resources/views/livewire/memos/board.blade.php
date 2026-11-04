@@ -123,6 +123,7 @@
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <span class="text-[12px] font-numeric font-semibold text-emerald-700">{{ $a->reference }}</span>
                                     <x-ui.status :status="$a->status" />
+                                    @if ($a->submission_route)<x-ui.badge :classes="$a->submission_route->badgeClasses()" :icon="$a->submission_route->icon()">{{ $a->submission_route->label() }}</x-ui.badge>@endif
                                     @if ($a->isDelegated())<x-ui.badge classes="bg-violet-50 text-violet-700" icon="fa-user-check">Prepared by {{ $a->submitted_by_name }}</x-ui.badge>
                                     @elseif ($a->isPreparedOnBehalf())<x-ui.badge classes="bg-purple-50 text-purple-700" icon="fa-user-pen">Prepared on behalf</x-ui.badge>@endif
                                     @if ($late)<x-ui.badge classes="bg-red-50 text-red-700" icon="fa-clock">Pending since {{ Ui::date($since) }}</x-ui.badge>@endif

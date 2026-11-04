@@ -5,7 +5,9 @@ namespace App\Models;
 use App\Enums\ExternalCategory;
 use App\Enums\ParticipantRole;
 use App\Enums\ParticipationStatus;
+use App\Enums\RateUnit;
 use App\Models\Concerns\Auditable;
+use App\Support\Money;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -19,6 +21,12 @@ class ActivityParticipant extends Model
 {
     use Auditable;
 
+    /** An external participant paid at a DSA scale's standard rate (the scale is kept in job_grade). */
+    public const RATE_DSA = 'dsa';
+
+    /** An external participant paid an amount typed in, per night, per day or once. */
+    public const RATE_CUSTOM = 'custom';
+
     protected $fillable = [
         'activity_id',
         'staff_id',
@@ -26,13 +34,18 @@ class ActivityParticipant extends Model
         'external_name',
         'external_organisation',
         'external_category',
+        'external_designation',
         'group_label',
         'headcount',
         'department_id',
         'designation_id',
         'office_id',
         'job_grade',
+        'rate_source',
+        'rate_amount',
+        'rate_unit',
         'role',
+        'role_other',
         'start_date',
         'end_date',
         'status',
@@ -49,6 +62,8 @@ class ActivityParticipant extends Model
             'headcount' => 'integer',
             'external_category' => ExternalCategory::class,
             'role' => ParticipantRole::class,
+            'rate_amount' => 'decimal:2',
+            'rate_unit' => RateUnit::class,
             'status' => ParticipationStatus::class,
             'start_date' => 'date',
             'end_date' => 'date',
@@ -104,6 +119,34 @@ class ActivityParticipant extends Model
             $this->isGroup() => $this->headcount.' × '.$this->group_label,
             default => (string) $this->staff?->name,
         };
+    }
+
+    /** The role as shown: the words typed in for Other (specify). */
+    public function roleLabel(): string
+    {
+        return $this->role === ParticipantRole::Other && filled($this->role_other)
+            ? (string) $this->role_other
+            : $this->role->label();
+    }
+
+    /** An external participant with a payment rate, paid by a computed cost line (App\Services\DsaCalculator). */
+    public function hasPaymentRate(): bool
+    {
+        return $this->is_external && in_array($this->rate_source, [self::RATE_DSA, self::RATE_CUSTOM], true);
+    }
+
+    /** "DSA scale 6, per night" or "Custom, KES 5,000.00 per day", for lists. */
+    public function rateLabel(): ?string
+    {
+        if (! $this->hasPaymentRate()) {
+            return null;
+        }
+
+        $unit = strtolower(($this->rate_unit ?? RateUnit::Night)->label());
+
+        return $this->rate_source === self::RATE_DSA
+            ? 'DSA scale '.$this->job_grade.', '.$unit
+            : 'KES '.Money::format(Money::toCents($this->rate_amount)).' '.$unit;
     }
 
     /** Officers added by number without names (e.g. 10 FAMs): no staff record, no availability or field-day checks. */

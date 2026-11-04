@@ -6,6 +6,7 @@ use App\Enums\ActivityStatus;
 use App\Enums\ParticipantRole;
 use App\Exceptions\ActivityWorkflowException;
 use App\Http\Controllers\PrivacyStatementController;
+use App\Livewire\Concerns\EntersCostLines;
 use App\Models\Activity;
 use App\Models\ActivityCategory;
 use App\Models\ActivityType;
@@ -15,11 +16,14 @@ use App\Models\County;
 use App\Models\Staff;
 use App\Models\SubmissionLink;
 use App\Services\DelegatedMemos;
+use App\Services\DsaCalculator;
 use App\Services\MemoDocument;
 use App\Services\PrivacyConsentService;
+use App\Support\DsaPeriod;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
@@ -39,6 +43,7 @@ use Livewire\WithFileUploads;
 #[Title('Prepare an activity memo')]
 class MemoRequest extends Component
 {
+    use EntersCostLines;
     use WithFileUploads;
 
     #[Locked]
@@ -65,11 +70,15 @@ class MemoRequest extends Component
 
     public string $activity_category_id = '';
 
+    /** The category in words, when "Other (specify)" is chosen. */
+    public string $category_other = '';
+
     public string $activity_type_id = '';
 
     public string $start_date = '';
 
-    public ?int $days = 1;
+    /** Expected completion date: the days and nights are worked out from the two dates. */
+    public string $end_date = '';
 
     public string $requested_budget = '';
 
@@ -87,14 +96,15 @@ class MemoRequest extends Component
 
     public string $role = 'member';
 
-    // A cost line
+    /** The role in words, when Other (specify) is chosen. */
+    public string $roleOther = '';
+
+    // A cost line (how its amount is worked out: App\Livewire\Concerns\EntersCostLines)
     public string $costCategory = '';
 
     public string $costParticipant = '';
 
     public string $costDescription = '';
-
-    public string $costAmount = '';
 
     public $document = null;
 
@@ -170,14 +180,44 @@ class MemoRequest extends Component
         $this->constituency_id = '';
     }
 
-    public function updatedDays(): void
+    public function updatedEndDate(): void
     {
         $this->saveDates();
     }
 
-    public function updatedStartDate(): void
+    public function updatedStartDate(string $value): void
     {
+        if ($value !== '' && ($this->end_date === '' || $this->end_date < $value)) {
+            $this->end_date = $value;
+        }
         $this->saveDates();
+    }
+
+    /** Days from the two dates, both counted; null when either is missing or they run backwards. */
+    private function dayCount(): ?int
+    {
+        $start = rescue(fn () => $this->start_date !== '' ? Carbon::parse($this->start_date)->startOfDay() : null, null, false);
+        $end = rescue(fn () => $this->end_date !== '' ? Carbon::parse($this->end_date)->startOfDay() : null, null, false);
+
+        return $start && $end && $end->gte($start) ? (int) $start->diffInDays($end) + 1 : null;
+    }
+
+    /** @return array<string, list<mixed>> */
+    private function dateRules(): array
+    {
+        return [
+            'start_date' => ['required', 'date', 'after_or_equal:today'],
+            'end_date' => ['required', 'date', 'after_or_equal:start_date', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (($this->dayCount() ?? 0) > 120) {
+                    $fail('An activity lasts at most 120 days.');
+                }
+            }],
+        ];
+    }
+
+    private function categoryRequiresDetail(): bool
+    {
+        return $this->activity_category_id !== '' && (bool) ActivityCategory::query()->whereKey($this->activity_category_id)->value('requires_detail');
     }
 
     /** Once the memo exists, a change of dates is saved at once so the DSA lines and the total are recalculated. */
@@ -188,12 +228,9 @@ class MemoRequest extends Component
             return;
         }
 
-        $this->validate([
-            'start_date' => ['required', 'date', 'after_or_equal:today'],
-            'days' => ['required', 'integer', 'min:1', 'max:120'],
-        ], [], ['days' => 'number of days']);
+        $this->validate($this->dateRules(), [], ['end_date' => 'expected completion date', 'start_date' => 'planned start date']);
 
-        $this->act(fn () => app(DelegatedMemos::class)->saveDates($link, $this->start_date, (int) $this->days), 'Dates saved. Allowances (DSA) and the total have been recalculated.', 'days');
+        $this->act(fn () => app(DelegatedMemos::class)->saveDates($link, $this->start_date, (int) $this->dayCount()), 'Dates saved. Allowances (DSA) and the total have been recalculated.', 'end_date');
     }
 
     public function save(DelegatedMemos $memos): void
@@ -207,29 +244,32 @@ class MemoRequest extends Component
             'target_audience' => ['nullable', 'string', 'max:255'],
             'notes' => ['nullable', 'string', 'max:5000'],
             'activity_category_id' => ['required', 'exists:activity_categories,id'],
+            'category_other' => $this->categoryRequiresDetail() ? ['required', 'string', 'max:150', 'regex:/\S/'] : ['nullable', 'string', 'max:150'],
             'activity_type_id' => ['nullable', 'exists:activity_types,id'],
-            'start_date' => ['required', 'date', 'after_or_equal:today'],
-            'days' => ['required', 'integer', 'min:1', 'max:120'],
+            ...$this->dateRules(),
             'requested_budget' => ['nullable', 'numeric', 'min:0', 'max:9999999999999', 'regex:/^\d+(\.\d{1,2})?$/'],
             'county_id' => ['nullable', 'exists:counties,id'],
             'constituency_id' => ['nullable', 'exists:constituencies,id'],
             'venue' => ['required', 'string', 'max:255'],
-        ], [], ['purpose' => 'purpose', 'justification' => 'introduction and justification', 'activity_category_id' => 'category', 'target_audience' => 'participants and stakeholders', 'requested_budget' => 'estimated budget']);
+        ], [], ['purpose' => 'purpose', 'justification' => 'introduction and justification', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'end_date' => 'expected completion date', 'target_audience' => 'participants and stakeholders', 'requested_budget' => 'estimated budget']);
+        $data['days'] = $this->dayCount();
+        $data['category_other'] = $this->categoryRequiresDetail() ? trim((string) $data['category_other']) : null;
 
         $this->act(fn () => $memos->saveDetails($this->link(), $data), 'Saved. Add the team and costs below, then preview the memo.');
     }
 
     public function addOfficers(DelegatedMemos $memos): void
     {
-        Validator::make(['picked' => $this->picked, 'role' => $this->role], [
+        Validator::make(['picked' => $this->picked, 'role' => $this->role, 'roleOther' => $this->roleOther], [
             'picked' => ['required', 'array', 'min:1'],
             'picked.*' => ['integer', 'exists:staff,id'],
             'role' => ['required', 'in:'.implode(',', array_column(ParticipantRole::cases(), 'value'))],
-        ], ['picked.required' => 'Tick the officers to add.'])->validate();
+            'roleOther' => $this->role === ParticipantRole::Other->value ? ['required', 'string', 'max:100', 'regex:/\S/'] : ['nullable', 'string', 'max:100'],
+        ], ['picked.required' => 'Tick the officers to add.', 'roleOther.required' => 'Say what their role is.'])->validate();
 
         $this->act(function () use ($memos) {
-            $this->warnings = $memos->addOfficers($this->link(), $this->picked, ParticipantRole::from($this->role));
-            $this->reset(['picked', 'staffSearch']);
+            $this->warnings = $memos->addOfficers($this->link(), $this->picked, ParticipantRole::from($this->role), $this->roleOther);
+            $this->reset(['picked', 'staffSearch', 'roleOther']);
         }, 'Added to the team. Allowances (DSA) are calculated for you.', 'picked');
     }
 
@@ -241,11 +281,12 @@ class MemoRequest extends Component
     public function addCost(DelegatedMemos $memos): void
     {
         $this->validate([
-            'costCategory' => ['required', 'exists:cost_categories,id'],
+            // DSA and external participants' allowances are calculated, never typed in.
+            'costCategory' => ['required', Rule::exists('cost_categories', 'id')->where(fn ($q) => $q->whereNotIn('code', DsaCalculator::COMPUTED_CODES))],
             'costParticipant' => ['nullable', 'integer'],
             'costDescription' => ['nullable', 'string', 'max:255'],
-            'costAmount' => ['required', 'regex:/^\d{1,3}(,?\d{3})*(\.\d{1,2})?$/'],
-        ], [], ['costCategory' => 'cost type', 'costAmount' => 'amount']);
+            ...$this->costMethodRules(),
+        ], $this->costMethodMessages(), ['costCategory' => 'cost type'] + $this->costMethodAttributes());
 
         $memo = $this->link()->memo;
         if ($this->costParticipant !== '' && ! $memo?->participants()->whereKey((int) $this->costParticipant)->exists()) {
@@ -259,9 +300,9 @@ class MemoRequest extends Component
                 'cost_category_id' => (int) $this->costCategory,
                 'activity_participant_id' => $this->costParticipant !== '' ? (int) $this->costParticipant : null,
                 'description' => $this->costDescription ?: null,
-                'estimated_amount' => $this->costAmount,
-            ]);
-            $this->reset(['costCategory', 'costParticipant', 'costDescription', 'costAmount']);
+            ] + $this->costMethodData());
+            $this->reset(['costCategory', 'costParticipant', 'costDescription']);
+            $this->resetCostMethod();
         }, 'Cost line added.', 'costAmount');
     }
 
@@ -305,9 +346,10 @@ class MemoRequest extends Component
             'target_audience' => (string) $memo->target_audience,
             'notes' => (string) $memo->notes,
             'activity_category_id' => (string) $memo->activity_category_id,
+            'category_other' => (string) $memo->category_other,
             'activity_type_id' => (string) $memo->activity_type_id,
             'start_date' => $memo->start_date?->toDateString() ?? '',
-            'days' => $memo->days,
+            'end_date' => $memo->end_date?->toDateString() ?? '',
             'requested_budget' => $memo->requested_budget !== null ? (string) (float) $memo->requested_budget : '',
             'county_id' => (string) $location?->county_id,
             'constituency_id' => (string) $location?->constituency_id,
@@ -331,16 +373,17 @@ class MemoRequest extends Component
             'editable' => $editable,
             'returned' => $memo?->status === ActivityStatus::ReturnedToPreparer,
             'issues' => $memo && $editable ? array_values(array_filter($document->issues($memo), fn (array $i) => ! $i['for_head'])) : [],
-            'categories' => ActivityCategory::query()->active()->ordered()->get(['id', 'name']),
+            'categories' => ActivityCategory::query()->active()->ordered()->get(['id', 'name', 'requires_detail']),
+            'needsCategoryDetail' => $this->categoryRequiresDetail(),
             'types' => $this->activity_category_id ? ActivityType::query()->active()->where('activity_category_id', $this->activity_category_id)->orderBy('name')->get(['id', 'name']) : collect(),
             'counties' => County::query()->orderBy('name')->get(['id', 'name']),
             'constituencies' => $this->county_id ? Constituency::query()->where('county_id', $this->county_id)->orderBy('name')->get(['id', 'name']) : collect(),
-            'costCategories' => CostCategory::query()->active()->where('code', '!=', 'dsa')->ordered()->get(['id', 'name']),
+            'costCategories' => CostCategory::query()->active()->whereNotIn('code', DsaCalculator::COMPUTED_CODES)->ordered()->get(['id', 'name']),
             'roles' => ParticipantRole::cases(),
             'matches' => $memo && $editable && mb_strlen($search) >= 2
                 ? Staff::query()->active()->search($search)->whereNotIn('id', $memo->participants->pluck('staff_id')->filter())->with(['department', 'designation'])->orderBy('name')->limit(20)->get()
                 : collect(),
-            'endDate' => $this->start_date && $this->days ? Carbon::parse($this->start_date)->addDays(max(1, (int) $this->days) - 1) : null,
+            'period' => ($days = $this->dayCount()) ? DsaPeriod::of(Carbon::parse($this->start_date), $days) : null,
         ]);
     }
 }

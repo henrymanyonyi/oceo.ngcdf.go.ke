@@ -2,8 +2,10 @@
 
 namespace App\Models;
 
+use App\Enums\CostMethod;
 use App\Enums\TravelMode;
 use App\Models\Concerns\Auditable;
+use App\Support\Money;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -20,6 +22,7 @@ class ActivityCost extends Model
         'cost_category_id',
         'activity_participant_id',
         'description',
+        'calculation_method',
         'quantity',
         'unit_rate',
         'estimated_amount',
@@ -44,6 +47,7 @@ class ActivityCost extends Model
             'computed_amount' => 'decimal:2',
             'is_computed' => 'boolean',
             'travel_mode' => TravelMode::class,
+            'calculation_method' => CostMethod::class,
         ];
     }
 
@@ -74,6 +78,30 @@ class ActivityCost extends Model
     public function participant(): BelongsTo
     {
         return $this->belongsTo(ActivityParticipant::class, 'activity_participant_id');
+    }
+
+    /** How the amount is worked out; a line entered before methods existed is a fixed amount. */
+    public function method(): CostMethod
+    {
+        return $this->calculation_method ?? CostMethod::Fixed;
+    }
+
+    /** Number of people on a per-person line. */
+    public function people(): ?int
+    {
+        return $this->method() === CostMethod::PerPerson && $this->quantity !== null ? (int) $this->quantity : null;
+    }
+
+    /** "KES 4,000.00 × 10 people", or null for a fixed amount and for computed lines (they carry their own description). */
+    public function calculationLabel(): ?string
+    {
+        if ($this->is_computed || $this->method() !== CostMethod::PerPerson || $this->unit_rate === null) {
+            return null;
+        }
+
+        $people = (int) $this->people();
+
+        return 'KES '.Money::format(Money::toCents($this->unit_rate)).' × '.$people.' '.($people === 1 ? 'person' : 'people');
     }
 
     public function isShared(): bool

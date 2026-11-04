@@ -5,14 +5,16 @@ namespace App\Livewire\Activities;
 use App\Enums\ActivityStatus;
 use App\Enums\DecisionType;
 use App\Enums\EmploymentType;
-use App\Enums\ExternalCategory;
 use App\Enums\ImprestStatus;
 use App\Enums\ParticipantRole;
 use App\Enums\ParticipationStatus;
+use App\Enums\RateUnit;
 use App\Enums\ReviewOffice;
 use App\Enums\ReviewRecommendation;
 use App\Enums\TravelMode;
 use App\Exceptions\ActivityWorkflowException;
+use App\Livewire\Concerns\EntersCostLines;
+use App\Livewire\Concerns\EntersExternalParticipants;
 use App\Livewire\Concerns\RunsActions;
 use App\Livewire\Concerns\SendsInstructions;
 use App\Models\Activity;
@@ -24,6 +26,7 @@ use App\Models\CostCategory;
 use App\Models\County;
 use App\Models\Department;
 use App\Models\Directive;
+use App\Models\DsaRate;
 use App\Models\Office;
 use App\Models\ParticipantRelease;
 use App\Models\Region;
@@ -43,6 +46,7 @@ use App\Support\FinancialYear;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
@@ -56,6 +60,8 @@ use Livewire\WithFileUploads;
 #[Layout('layouts.admin')]
 class Show extends Component
 {
+    use EntersCostLines;
+    use EntersExternalParticipants;
     use RunsActions;
     use SendsInstructions;
     use WithFileUploads;
@@ -188,18 +194,12 @@ class Show extends Component
     /** Used for every selected officer with an overlap who has no reason of their own. */
     public string $sameConflictReason = '';
 
-    public string $externalName = '';
-
-    public string $externalOrganisation = '';
-
-    public string $externalCategory = 'other';
-
     public ?int $participantId = null;
 
     public string $daysStart = '';
 
     /** Null by default, set in openDays(); see Activities\Form::$days. */
-    public ?int $daysCount = null;
+    public string $daysEnd = '';
 
     public ?int $costId = null;
 
@@ -208,8 +208,6 @@ class Show extends Component
     public string $costParticipantId = '';
 
     public string $costDescription = '';
-
-    public string $costAmount = '';
 
     public string $costTravelMode = '';
 
@@ -289,10 +287,11 @@ class Show extends Component
         $this->reset([
             'showDecide', 'showRecordDecision', 'showPostpone', 'showExtend', 'showCancel', 'showComplete', 'showReport', 'showReturnReport', 'showClose', 'showDiscard',
             'showForward', 'showReturnHod', 'showNote', 'reviewText', 'recommendation',
-            'showAddStaff', 'showAddExternal', 'showAddGroup', 'groupLabel', 'groupCount', 'groupGrade', 'showRemoveParticipant', 'staffDepartment', 'staffOffice', 'showSelectedOnly', 'sameConflictReason', 'showDays', 'showExplain', 'overlapReason', 'staffSort', 'daysStart', 'daysCount', 'showCost', 'showOverride', 'showLocation', 'showDirective', 'showImprest', 'showDocument', 'showInstruct', 'instruct', 'instructionNote', 'otherInstructions',
+            'showAddStaff', 'showAddExternal', 'showAddGroup', 'groupLabel', 'groupCount', 'groupGrade', 'showRemoveParticipant', 'staffDepartment', 'staffOffice', 'showSelectedOnly', 'sameConflictReason', 'showDays', 'showExplain', 'overlapReason', 'staffSort', 'daysStart', 'daysEnd', 'showCost', 'showOverride', 'showLocation', 'showDirective', 'showImprest', 'showDocument', 'showInstruct', 'instruct', 'instructionNote', 'otherInstructions',
             'comment', 'memoReference', 'memoDate', 'scan', 'reason', 'newStart', 'newDays', 'extraDays', 'actualDate', 'reportReceivedOn', 'outputsAchieved',
-            'findings', 'recommendations', 'reportFile', 'staffSearch', 'selectedStaff', 'conflictReasons', 'externalName', 'externalOrganisation',
-            'participantId', 'costId', 'costCategoryId', 'costParticipantId', 'costDescription', 'costAmount', 'costTravelMode', 'overrideAmount',
+            'findings', 'recommendations', 'reportFile', 'staffSearch', 'selectedStaff', 'conflictReasons', 'role', 'roleOther', ...self::EXTERNAL_FIELDS,
+            'participantId', 'costId', 'costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode', 'overrideAmount',
+            'costMethod', 'costUnitRate', 'costPeople', 'costAmount',
             'locRegion', 'locCounty', 'locConstituency', 'locVenue', 'directiveBody', 'directiveDepartment', 'directiveDue', 'document',
             'showRelease', 'releaseKind', 'releaseLastDay', 'releaseInitiatedBy', 'releaseReason', 'releaseDestination', 'releaseRevised', 'releaseRevisionReason',
             'releaseExtraCategory', 'releaseExtraAmount', 'releaseExtraDescription',
@@ -526,15 +525,15 @@ class Show extends Component
         $this->validate([
             'selectedStaff' => ['required', 'array', 'min:1'],
             'selectedStaff.*' => ['integer', 'exists:staff,id'],
-            'role' => ['required', 'in:'.implode(',', array_column(ParticipantRole::cases(), 'value'))],
+            ...$this->roleRules(),
             'reason' => [$this->activity->status->requiresAmendment() ? 'required' : 'nullable', 'string', 'max:1000'],
-        ], [], ['selectedStaff' => 'officers', 'reason' => 'reason for the change']);
+        ], [], ['selectedStaff' => 'officers', 'reason' => 'reason for the change', 'roleOther' => 'role']);
 
         // A reason is kept only for people who overlap; the shared one fills any they left blank.
         $overlaps = app(ParticipantChecks::class)->conflictingStaff($this->activity->start_date, $this->activity->end_date, $this->activity->id);
         $reasons = collect($this->selectedStaff)->map(fn ($id) => (int) $id)->filter(fn ($id) => isset($overlaps[$id]))
             ->mapWithKeys(fn ($id) => [$id => trim((string) ($this->conflictReasons[$id] ?? '')) ?: trim($this->sameConflictReason)])->filter()->all();
-        $result = $this->attempt(fn () => $editor->addStaff($this->activity, array_map('intval', $this->selectedStaff), ParticipantRole::from($this->role), $this->user(), $reasons, $this->reason ?: null));
+        $result = $this->attempt(fn () => $editor->addStaff($this->activity, array_map('intval', $this->selectedStaff), ParticipantRole::from($this->role), $this->user(), $reasons, $this->reason ?: null, $this->roleOther));
         if (is_array($result)) {
             $this->done("{$result['added']} added.".($result['returned'] ? ' The change is beyond tolerance, so the activity is back with the CEO.' : ''), $result['warnings']);
         }
@@ -588,22 +587,33 @@ class Show extends Component
         $this->selectedStaff = collect($this->selectedStaff)->map(fn ($s) => (int) $s)->reject(fn ($s) => $s === $id)->values()->all();
     }
 
+    /** Add an external participant, or change one ($id). */
+    public function openExternal(?int $id = null): void
+    {
+        $this->resetErrorBag();
+        $this->reset([...self::EXTERNAL_FIELDS, 'role', 'roleOther', 'reason']);
+        $this->externalStart = $this->activity->start_date->toDateString();
+        $this->externalEnd = $this->activity->end_date->toDateString();
+        if ($id) {
+            $this->fillExternal($this->activity->participants()->where('is_external', true)->findOrFail($id));
+        }
+        $this->showAddExternal = true;
+    }
+
     public function addExternal(ActivityEditor $editor): void
     {
         $this->validate([
-            'externalName' => ['required', 'string', 'max:255'],
-            'externalOrganisation' => ['nullable', 'string', 'max:255'],
-            'externalCategory' => ['required', 'in:'.implode(',', array_column(ExternalCategory::cases(), 'value'))],
-            'role' => ['required', 'in:'.implode(',', array_column(ParticipantRole::cases(), 'value'))],
+            ...$this->externalRules(),
             'reason' => [$this->activity->status->requiresAmendment() ? 'required' : 'nullable', 'string', 'max:1000'],
-        ], [], ['externalName' => 'name']);
+        ], $this->externalMessages(), self::EXTERNAL_ATTRIBUTES + ['reason' => 'reason for the change']);
 
-        if ($this->attempt(fn () => $editor->addExternal($this->activity, [
-            'external_name' => $this->externalName,
-            'external_organisation' => $this->externalOrganisation ?: null,
-            'external_category' => ExternalCategory::from($this->externalCategory),
-        ], ParticipantRole::from($this->role), $this->user(), $this->reason ?: null))) {
-            $this->done('External participant added.');
+        $participant = $this->externalId ? $this->activity->participants()->where('is_external', true)->findOrFail($this->externalId) : null;
+        $result = $this->attempt(fn () => $participant
+            ? $editor->updateExternal($participant, $this->externalData(), ParticipantRole::from($this->role), $this->user(), $this->reason ?: null)
+            : $editor->addExternal($this->activity, $this->externalData(), ParticipantRole::from($this->role), $this->user(), $this->reason ?: null));
+
+        if ($result !== null) {
+            $this->done($participant ? 'External participant updated.' : 'External participant added.');
         }
     }
 
@@ -614,14 +624,15 @@ class Show extends Component
             'groupLabel' => ['required', 'string', 'max:255'],
             'groupCount' => ['required', 'integer', 'min:1', 'max:500'],
             'groupGrade' => ['required', new DsaGrade(EmploymentType::Attachee)],
-            'role' => ['required', 'in:'.implode(',', array_column(ParticipantRole::cases(), 'value'))],
+            ...$this->roleRules(),
             'reason' => [$this->activity->status->requiresAmendment() ? 'required' : 'nullable', 'string', 'max:1000'],
-        ], [], ['groupLabel' => 'who they are', 'groupCount' => 'number', 'groupGrade' => 'DSA scale']);
+        ], [], ['groupLabel' => 'who they are', 'groupCount' => 'number', 'groupGrade' => 'DSA scale', 'roleOther' => 'role']);
 
         if ($this->attempt(fn () => $editor->addGroup($this->activity, [
             'group_label' => $this->groupLabel,
             'headcount' => $this->groupCount,
             'job_grade' => $this->groupGrade,
+            'role_other' => $this->roleOther,
         ], ParticipantRole::from($this->role), $this->user(), $this->reason ?: null))) {
             $this->done("{$this->groupCount} × {$this->groupLabel} added.");
         }
@@ -650,7 +661,7 @@ class Show extends Component
         $this->resetErrorBag();
         $this->participantId = $id;
         $this->daysStart = $participant->startOn($this->activity)->toDateString();
-        $this->daysCount = $participant->plannedDays($this->activity);
+        $this->daysEnd = $participant->endOn($this->activity)->toDateString();
         $this->reason = '';
         $this->overlapReason = '';
         $this->showDays = true;
@@ -660,21 +671,17 @@ class Show extends Component
     {
         $this->validate([
             'daysStart' => ['required', 'date', 'after_or_equal:'.$this->activity->start_date->toDateString(), 'before_or_equal:'.$this->activity->end_date->toDateString()],
-            'daysCount' => ['required', 'integer', 'min:1', 'max:'.$this->activity->days],
+            'daysEnd' => ['required', 'date', 'after_or_equal:daysStart', 'before_or_equal:'.$this->activity->end_date->toDateString()],
             'reason' => [$this->activity->status->requiresAmendment() ? 'required' : 'nullable', 'string', 'max:1000'],
         ], [
             'daysStart.after_or_equal' => 'The first day must be within the activity.',
             'daysStart.before_or_equal' => 'The first day must be within the activity.',
-        ], ['daysStart' => 'first day', 'daysCount' => 'number of days', 'reason' => 'reason for the change']);
+            'daysEnd.after_or_equal' => 'The last day cannot be before the first day.',
+            'daysEnd.before_or_equal' => 'The last day must be within the activity, which ends '.$this->activity->end_date->format('d M Y').'.',
+        ], ['daysStart' => 'first day', 'daysEnd' => 'last day', 'reason' => 'reason for the change']);
 
         $start = Carbon::parse($this->daysStart);
-        $end = $start->copy()->addDays($this->daysCount - 1);
-
-        if ($end->gt($this->activity->end_date)) {
-            $this->addError('daysCount', sprintf('From %s the activity has only %d days left, ending %s.', $start->format('d M Y'), (int) $start->diffInDays($this->activity->end_date) + 1, $this->activity->end_date->format('d M Y')));
-
-            return;
-        }
+        $end = Carbon::parse($this->daysEnd);
 
         $participant = $this->activity->participants()->findOrFail($this->participantId);
         $returned = $this->attempt(fn () => $editor->setParticipantDates($participant, $start, $end, $this->user(), $this->reason ?: null, $this->overlapReason ?: null));
@@ -775,13 +782,15 @@ class Show extends Component
     public function openCost(?int $id = null): void
     {
         $this->resetErrorBag();
+        $this->reset(['costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode']);
+        $this->resetCostMethod();
         $this->costId = $id;
         if ($id && $line = $this->activity->costs()->find($id)) {
             $this->costCategoryId = (string) $line->cost_category_id;
             $this->costParticipantId = (string) ($line->activity_participant_id ?? '');
             $this->costDescription = (string) $line->description;
-            $this->costAmount = (string) $line->estimated_amount;
             $this->costTravelMode = (string) ($line->travel_mode?->value ?? '');
+            $this->fillCostMethod($line);
         }
         $this->showCost = true;
     }
@@ -789,13 +798,14 @@ class Show extends Component
     public function saveCost(ActivityEditor $editor): void
     {
         $this->validate([
-            'costCategoryId' => ['required', 'exists:cost_categories,id'],
+            // An external participant's allowance is worked out from their rate, never typed in.
+            'costCategoryId' => ['required', Rule::exists('cost_categories', 'id')->where(fn ($q) => $q->where('code', '!=', DsaCalculator::EXTERNAL_CATEGORY_CODE))],
             'costParticipantId' => ['nullable', 'integer'],
             'costDescription' => ['nullable', 'string', 'max:255'],
-            'costAmount' => ['required', 'regex:/^\d{1,3}(,?\d{3})*(\.\d{1,2})?$/'],
             'costTravelMode' => ['nullable', 'in:'.implode(',', array_column(TravelMode::cases(), 'value'))],
             'reason' => [$this->activity->status->requiresAmendment() ? 'required' : 'nullable', 'string', 'max:1000'],
-        ], ['costAmount.regex' => 'Enter an amount such as 12,500.00.'], ['costCategoryId' => 'cost type', 'costAmount' => 'amount']);
+            ...$this->costMethodRules(),
+        ], $this->costMethodMessages(), ['costCategoryId' => 'cost type'] + $this->costMethodAttributes());
 
         if ($this->costParticipantId && ! $this->activity->participants()->whereKey($this->costParticipantId)->exists()) {
             $this->addError('costParticipantId', 'Choose someone on this activity.');
@@ -808,9 +818,8 @@ class Show extends Component
             'cost_category_id' => (int) $this->costCategoryId,
             'activity_participant_id' => $this->costParticipantId ? (int) $this->costParticipantId : null,
             'description' => $this->costDescription ?: null,
-            'estimated_amount' => $this->costAmount,
             'travel_mode' => $this->costTravelMode ?: null,
-        ], $this->user(), $line, $this->reason ?: null));
+        ] + $this->costMethodData(), $this->user(), $line, $this->reason ?: null));
 
         if ($returned !== null) {
             $this->done('Planned cost saved.'.($returned === true ? ' The increase is beyond tolerance, so the activity is back with the CEO.' : ''));
@@ -992,9 +1001,8 @@ class Show extends Component
         // The days popup warns as soon as the chosen days overlap another approved activity.
         $daysOverlap = collect();
         $daysParticipant = $this->showDays && $this->participantId ? $activity->participants->firstWhere('id', $this->participantId) : null;
-        if ($daysParticipant?->staff_id && $this->daysStart && $this->daysCount >= 1) {
-            $from = Carbon::parse($this->daysStart);
-            $daysOverlap = $checks->conflicts($daysParticipant->staff_id, $from, $from->copy()->addDays($this->daysCount - 1), $activity->id);
+        if ($daysParticipant?->staff_id && $this->daysStart && $this->daysEnd && $this->daysEnd >= $this->daysStart) {
+            $daysOverlap = $checks->conflicts($daysParticipant->staff_id, Carbon::parse($this->daysStart), Carbon::parse($this->daysEnd), $activity->id);
         }
 
         $candidates = collect();
@@ -1039,7 +1047,11 @@ class Show extends Component
             'explaining' => $this->showExplain && $this->participantId ? $activity->participants->firstWhere('id', $this->participantId) : null,
             'candidates' => $candidates,
             'picker' => $picker,
-            'costCategories' => CostCategory::query()->active()->ordered()->get(),
+            'costCategories' => CostCategory::query()->active()->where('code', '!=', DsaCalculator::EXTERNAL_CATEGORY_CODE)->ordered()->get(),
+            'grades' => DsaRate::grades(),
+            'rateUnits' => RateUnit::cases(),
+            'dsaUnit' => RateUnit::forDsaBasis((string) app(AppSettings::class)->get('dsa_basis')),
+            'reservedForCeo' => $activity->isReservedForCeo() && ! $this->user()->can('activities.decide'),
             'departments' => Department::query()->active()->ordered()->get(['id', 'name']),
             'regions' => Region::query()->orderBy('name')->get(['id', 'name']),
             'counties' => County::query()->orderBy('name')->get(['id', 'name']),

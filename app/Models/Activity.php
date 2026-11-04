@@ -7,6 +7,7 @@ use App\Enums\DecisionMode;
 use App\Enums\ImprestStatus;
 use App\Enums\Rag;
 use App\Enums\ReviewOffice;
+use App\Enums\SubmissionRoute;
 use App\Models\Concerns\Auditable;
 use App\Support\FinancialYear;
 use App\Support\Money;
@@ -52,6 +53,7 @@ class Activity extends Model
         'responsible_hod_name',
         'notes',
         'activity_category_id',
+        'category_other',
         'activity_type_id',
         'programme_id',
         'budget_line_id',
@@ -90,6 +92,7 @@ class Activity extends Model
             'status' => ActivityStatus::class,
             'approval_mode' => DecisionMode::class,
             'review_office' => ReviewOffice::class,
+            'submission_route' => SubmissionRoute::class,
             'imprest_status' => ImprestStatus::class,
             'start_date' => 'date',
             'end_date' => 'date',
@@ -129,6 +132,39 @@ class Activity extends Model
     public function category(): BelongsTo
     {
         return $this->belongsTo(ActivityCategory::class, 'activity_category_id');
+    }
+
+    /** The category as shown: the words typed in for "Other (specify)". */
+    public function categoryLabel(): string
+    {
+        $name = (string) $this->category?->name;
+
+        return $this->category?->requires_detail && filled($this->category_other) ? $name.': '.$this->category_other : $name;
+    }
+
+    /**
+     * How the Head of Department sent the memo on. Memos submitted before the choice existed,
+     * and those the Office of the CEO forwards, follow the review route.
+     */
+    public function route(): SubmissionRoute
+    {
+        return $this->submission_route ?? SubmissionRoute::Review;
+    }
+
+    /** Sent by the Head of Department directly to the CEO: the Chief of Staff and the Assistant take no part. */
+    public function isDirectToCeo(): bool
+    {
+        return $this->submission_route === SubmissionRoute::Direct;
+    }
+
+    /**
+     * A memo sent directly to the CEO and not yet decided (with the CEO, or returned by the CEO to the
+     * Head of Department). Only the CEO acts on it for the Office of the CEO; the Chief of Staff and the
+     * Assistant may read it but not review, comment, edit, record a decision, postpone or cancel it.
+     */
+    public function isReservedForCeo(): bool
+    {
+        return $this->isDirectToCeo() && in_array($this->status, [ActivityStatus::AwaitingDecision, ActivityStatus::ReturnedToHod], true);
     }
 
     /** @return BelongsTo<ActivityType, $this> */
@@ -361,10 +397,10 @@ class Activity extends Model
                 $this->isDepartmentDraft() => 'Complete the memo and submit it for review.',
                 default => 'Complete the memo and forward it to the CEO.',
             },
-            ActivityStatus::WithHod => 'The Head of Department forwards it to the Chief of Staff, returns it to the officer or declines it.',
+            ActivityStatus::WithHod => 'The Head of Department forwards it (through the COS/ACOS office or directly to the CEO), returns it to the officer or declines it.',
             ActivityStatus::ReturnedToPreparer => 'The officer makes the changes asked for and submits it again.',
             ActivityStatus::UnderReview => 'Review the memo, then forward it or return it for correction.',
-            ActivityStatus::ReturnedToHod => 'Make the corrections asked for and resubmit.',
+            ActivityStatus::ReturnedToHod => $this->isDirectToCeo() ? 'Make the corrections the CEO asked for and resubmit it to the CEO.' : 'Make the corrections asked for and resubmit.',
             ActivityStatus::AwaitingDecision => 'The CEO approves and authorises, declines, or returns it.',
             ActivityStatus::Returned => 'Answer the CEO\'s comments, then forward it again or return it to the Head of Department.',
             ActivityStatus::Declined => $this->wasDeclinedByHod() ? 'None. The Head of Department declined this memo.' : 'None. The CEO declined this memo.',

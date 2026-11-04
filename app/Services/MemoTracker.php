@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\ActivityStatus;
 use App\Enums\ReviewOffice;
+use App\Enums\SubmissionRoute;
 use App\Models\Activity;
 use App\Models\ActivityStatusHistory;
 use App\Models\User;
@@ -60,6 +61,8 @@ class MemoTracker
                 'ceo_returned' => ['label' => 'Returned by the CEO', 'icon' => 'fa-rotate-left', 'empty' => 'The CEO has not returned any memo.'],
                 'with_hod' => ['label' => 'Returned to Heads of Department', 'icon' => 'fa-reply', 'empty' => 'No memo is back with a Head of Department.'],
                 'forwarded' => ['label' => 'Forwarded to the CEO', 'icon' => 'fa-share', 'empty' => 'No memo is waiting for the CEO.'],
+                // Read only for the Chief of Staff and the Assistant: the Head sent it straight to the CEO (4 November 2026).
+                'direct' => ['label' => 'Sent directly to the CEO', 'icon' => 'fa-arrow-right-to-bracket', 'empty' => 'No memo has been sent directly to the CEO and is waiting.'],
                 'on_behalf' => ['label' => 'Prepared for Heads of Department', 'icon' => 'fa-user-pen', 'empty' => 'No memos have been prepared on a Head of Department\'s behalf.'],
                 'recent' => ['label' => 'Recently processed', 'icon' => 'fa-clock-rotate-left', 'empty' => 'You have not acted on a memo in the last 30 days.'],
                 'in_review' => ['label' => 'All under review', 'icon' => 'fa-magnifying-glass', 'empty' => 'No memo is under review.'],
@@ -85,7 +88,10 @@ class MemoTracker
         $since = now()->subDays(30);
 
         return match ($tab) {
-            'awaiting', 'forwarded' => $query->status(ActivityStatus::AwaitingDecision),
+            'awaiting' => $query->status(ActivityStatus::AwaitingDecision),
+            // The reviewers' own: memos that came through them, not those the Head sent directly to the CEO.
+            'forwarded' => $query->status(ActivityStatus::AwaitingDecision)->where(fn (Builder $q) => $this->notDirect($q)),
+            'direct' => $query->where('submission_route', SubmissionRoute::Direct->value)->status(ActivityStatus::AwaitingDecision, ActivityStatus::ReturnedToHod),
             'returned' => $this->perspective($user) === self::PERSPECTIVE_DEPARTMENT ? $query->status(ActivityStatus::ReturnedToHod) : $query->status(ActivityStatus::Returned),
             'ceo_returned' => $query->status(ActivityStatus::Returned),
             'approved' => $query->status(...$this->approvedStatuses()),
@@ -94,7 +100,7 @@ class MemoTracker
                 ->whereDoesntHave('statusHistory', fn (Builder $h) => $h->where('from_status', ActivityStatus::WithHod->value)->where('to_status', ActivityStatus::Declined->value))),
             'in_review' => $query->status(ActivityStatus::UnderReview),
             'mine' => $query->status(ActivityStatus::UnderReview)->where('review_office', ($office ?? ReviewOffice::ChiefOfStaff)->value),
-            'with_hod' => $query->status(ActivityStatus::ReturnedToHod),
+            'with_hod' => $query->status(ActivityStatus::ReturnedToHod)->when($this->perspective($user) === self::PERSPECTIVE_REVIEWER, fn (Builder $q) => $q->where(fn (Builder $q) => $this->notDirect($q))),
             'on_behalf' => $query->where(fn (Builder $q) => $q->whereNotNull('responsible_hod_name')->orWhereNotNull('responsible_hod_id'))
                 ->where(fn (Builder $q) => $q->whereNull('responsible_hod_id')->orWhereColumn('responsible_hod_id', '!=', 'created_by')),
             'recent' => $this->perspective($user) === self::PERSPECTIVE_CEO
@@ -107,6 +113,12 @@ class MemoTracker
             'pending' => $query->status(ActivityStatus::UnderReview, ActivityStatus::AwaitingDecision, ActivityStatus::Returned),
             default => $query,
         };
+    }
+
+    /** @param  Builder<Activity>  $query */
+    private function notDirect(Builder $query): void
+    {
+        $query->whereNull('submission_route')->orWhere('submission_route', '!=', SubmissionRoute::Direct->value);
     }
 
     /** @return array<string, int> tab => number of memos */
