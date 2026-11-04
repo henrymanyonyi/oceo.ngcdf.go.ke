@@ -4,6 +4,7 @@ namespace App\Livewire\Memos;
 
 use App\Enums\ActivityStatus;
 use App\Enums\ReviewOffice;
+use App\Enums\SubmissionRoute;
 use App\Livewire\Concerns\RunsActions;
 use App\Models\Activity;
 use App\Models\ActivityDocument;
@@ -58,6 +59,9 @@ class Show extends Component
 
     public string $office = 'assistant_chief_of_staff';
 
+    /** How the Head sends the memo on (App\Enums\SubmissionRoute): through the COS/ACOS office, or directly to the CEO. */
+    public string $route = 'review';
+
     public string $note = '';
 
     /** The Head signs as acting ("Ag." before their designation) on this submission. */
@@ -99,6 +103,8 @@ class Show extends Component
     public function openSubmit(): void
     {
         $this->office = ($this->activity->review_office ?? ReviewOffice::AssistantChiefOfStaff)->value;
+        // A memo returned for correction goes back along the route it came; a new one starts on the review route.
+        $this->route = ($this->activity->status === ActivityStatus::ReturnedToHod ? $this->activity->route() : SubmissionRoute::Review)->value;
         $this->note = '';
         $this->acting = (bool) $this->activity->hod_acting;
         $this->resetErrorBag();
@@ -108,17 +114,22 @@ class Show extends Component
     public function submit(ActivityLifecycle $lifecycle): void
     {
         $this->validate([
+            'route' => ['required', 'in:'.implode(',', array_column(SubmissionRoute::cases(), 'value'))],
             'office' => ['required', 'in:'.implode(',', array_column(ReviewOffice::cases(), 'value'))],
             'note' => ['nullable', 'string', 'max:2000'],
             'acting' => ['boolean'],
-        ], [], ['note' => 'note to the reviewer']);
+        ], [], ['note' => 'note', 'route' => 'route']);
 
         $resubmitting = $this->activity->status === ActivityStatus::ReturnedToHod;
 
-        if ($this->attempt(fn () => $lifecycle->submitForReview($this->activity, Auth::user(), ReviewOffice::from($this->office), $this->note, $this->acting))) {
+        if ($this->attempt(fn () => $lifecycle->submit($this->activity, Auth::user(), SubmissionRoute::from($this->route), ReviewOffice::from($this->office), $this->note, $this->acting)) !== null) {
             $this->showSubmit = false;
             $this->activity->refresh();
-            $this->toast($resubmitting ? 'Resubmitted. The reviewer has been told.' : 'Submitted for review. The '.$this->activity->review_office?->label().' has been told.');
+            $this->toast(match (true) {
+                $this->activity->isDirectToCeo() => ($resubmitting ? 'Resubmitted' : 'Submitted').' directly to the CEO, who has been told.',
+                $resubmitting => 'Resubmitted. The reviewer has been told.',
+                default => 'Submitted for review. The '.$this->activity->review_office?->label().' has been told.',
+            });
         }
     }
 
@@ -126,16 +137,22 @@ class Show extends Component
     {
         abort_unless(in_array($action, ['showForward', 'showReturnToOfficer', 'showDecline'], true), 404);
         $this->resetErrorBag();
-        $this->reset(['hodReason', 'note', 'acting', 'forwardTo']);
+        $this->reset(['hodReason', 'note', 'acting', 'forwardTo', 'route']);
         $this->{$action} = true;
     }
 
     public function forwardForReview(DelegatedMemos $memos): void
     {
         $this->validate(['note' => ['nullable', 'string', 'max:2000']], [], ['note' => 'note to the Chief of Staff']);
-        $this->validate(['forwardTo' => ['required', 'in:'.implode(',', array_column(ReviewOffice::cases(), 'value'))], 'acting' => ['boolean']]);
+        $this->validate([
+            'route' => ['required', 'in:'.implode(',', array_column(SubmissionRoute::cases(), 'value'))],
+            'forwardTo' => ['required', 'in:'.implode(',', array_column(ReviewOffice::cases(), 'value'))],
+            'acting' => ['boolean'],
+        ]);
         $office = ReviewOffice::from($this->forwardTo);
-        if ($this->attempt(fn () => $memos->forward($this->activity, Auth::user(), $office, $this->note, $this->acting), 'Forwarded to the '.$office->label().' for review. The officer has been told.')) {
+        $route = SubmissionRoute::from($this->route);
+        $done = $route === SubmissionRoute::Direct ? 'Forwarded directly to the CEO. The officer has been told.' : 'Forwarded to the '.$office->label().' for review. The officer has been told.';
+        if ($this->attempt(fn () => $memos->forward($this->activity, Auth::user(), $office, $this->note, $this->acting, $route), $done)) {
             $this->showForward = false;
             $this->activity->refresh();
         }
@@ -284,6 +301,7 @@ class Show extends Component
             'issues' => $activity->status->isWithDepartment() ? $memoDocument->issues($activity) : [],
             'budget' => ! $readOnly && $activity->organising_department_id ? $budget->forActivity($activity) : null,
             'offices' => ReviewOffice::cases(),
+            'routes' => SubmissionRoute::cases(),
             'designation' => Auth::user()->signingDesignation(),
             'regions' => $this->showLocation ? Region::query()->orderBy('name')->get(['id', 'name']) : collect(),
             'counties' => $this->showLocation ? County::query()->orderBy('name')->get(['id', 'name']) : collect(),

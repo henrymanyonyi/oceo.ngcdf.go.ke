@@ -8,6 +8,7 @@ use App\Enums\DecisionType;
 use App\Enums\ParticipationStatus;
 use App\Enums\ReviewOffice;
 use App\Enums\ReviewRecommendation;
+use App\Enums\SubmissionRoute;
 use App\Exceptions\ActivityWorkflowException;
 use App\Models\Activity;
 use App\Models\ActivityAmendment;
@@ -59,11 +60,34 @@ class ActivityLifecycle
     // ── Activity memo workflow ─────────────────────────────────────────
 
     /**
-     * A Head of Department submits their memo for review by the Assistant
-     * Chief of Staff or the Chief of Staff, or resubmits it after correcting
-     * it. A resubmission goes back to the office that returned it.
+     * A Head of Department sends their memo on, along the route they choose
+     * (4 November 2026): through the COS/ACOS office for review, or directly
+     * to the CEO. A memo returned for correction goes back along the route it
+     * came: to the office that returned it, or to the CEO, whatever is asked.
      */
+    public function submit(Activity $activity, User $user, SubmissionRoute $route, ?ReviewOffice $office = null, ?string $note = null, bool $acting = false): void
+    {
+        $resubmitted = $activity->status === ActivityStatus::ReturnedToHod;
+        $route = $resubmitted ? $activity->route() : $route;
+
+        $route === SubmissionRoute::Direct
+            ? $this->submitDirect($activity, $user, $note, $acting)
+            : $this->submitToReviewer($activity, $user, $office, $note, $acting);
+    }
+
+    /** The review route: HOD → Assistant Chief of Staff or Chief of Staff → CEO. */
     public function submitForReview(Activity $activity, User $user, ?ReviewOffice $office = null, ?string $note = null, bool $acting = false): void
+    {
+        $this->submit($activity, $user, SubmissionRoute::Review, $office, $note, $acting);
+    }
+
+    /** The direct route: HOD → CEO, bypassing the COS/ACOS office entirely. */
+    public function submitDirectToCeo(Activity $activity, User $user, ?string $note = null, bool $acting = false): void
+    {
+        $this->submit($activity, $user, SubmissionRoute::Direct, null, $note, $acting);
+    }
+
+    private function submitToReviewer(Activity $activity, User $user, ?ReviewOffice $office, ?string $note, bool $acting): void
     {
         $this->assertHeadMaySubmit($activity, $user);
 
@@ -76,8 +100,42 @@ class ActivityLifecycle
             default => 'Submitted for review by the '.$office->label(),
         }.($note !== '' ? ": {$note}" : '');
 
-        $this->move($activity, ActivityStatus::UnderReview, $reason, $user, extra: ['review_office' => $office, 'status_reason' => null] + $this->signing($user, $acting));
+        $this->move($activity, ActivityStatus::UnderReview, $reason, $user, extra: ['review_office' => $office, 'status_reason' => null, 'submission_route' => SubmissionRoute::Review] + $this->signing($user, $acting));
         $this->alerts->toOffice($office, ActivityAlert::submittedForReview($activity, $resubmitted));
+    }
+
+    /**
+     * Straight into the CEO's decision queue, so it must be as ready as a memo a reviewer forwards: nothing
+     * blocking missing, a team, a location and every overlap explained. The Chief of Staff and the
+     * Assistant are not told and take no part (isReservedForCeo()).
+     */
+    private function submitDirect(Activity $activity, User $user, ?string $note, bool $acting): void
+    {
+        $this->assertHeadMaySubmit($activity, $user);
+        $this->assertReadyForDecision($activity);
+
+        $resubmitted = $activity->status === ActivityStatus::ReturnedToHod;
+        $note = trim((string) $note);
+        $reason = match (true) {
+            $resubmitted => 'Corrected and resubmitted directly to the CEO',
+            $activity->status === ActivityStatus::WithHod => "Reviewed by the Head of Department and forwarded, on behalf of {$activity->submitted_by_name}, directly to the CEO",
+            default => 'Submitted directly to the CEO',
+        }.($note !== '' ? ": {$note}" : '');
+
+        $this->move($activity, ActivityStatus::AwaitingDecision, $reason, $user, extra: ['review_office' => null, 'status_reason' => null, 'submission_route' => SubmissionRoute::Direct] + $this->signing($user, $acting));
+        $this->alerts->toCeo(ActivityAlert::awaitingDecision($activity));
+    }
+
+    /**
+     * A memo sent directly to the CEO, not yet decided, is the CEO's alone in the Office of the CEO: the
+     * Chief of Staff and the Assistant keep their general right to read it (activities.view) but cannot
+     * review, comment, edit, record a decision or postpone it. Checked here, not only by hiding buttons.
+     */
+    public function assertNotReservedForCeo(Activity $activity, User $user): void
+    {
+        if ($activity->isReservedForCeo() && $user->can('activities.view') && ! $user->can('activities.decide')) {
+            throw new AuthorizationException('This memo was sent directly to the CEO. The Chief of Staff and the Assistant can read it but take no part in its review or decision.');
+        }
     }
 
     private function assertHeadMaySubmit(Activity $activity, User $user): void
@@ -241,6 +299,7 @@ class ActivityLifecycle
         if (! $activity->status->isPendingDecision() && $activity->status !== ActivityStatus::ReturnedToHod) {
             throw new ActivityWorkflowException('Comments can be added while the memo is being reviewed or decided.');
         }
+        $this->assertNotReservedForCeo($activity, $user);
 
         return $this->note($activity, $user, trim($body), $recommendation);
     }
@@ -268,6 +327,10 @@ class ActivityLifecycle
 
         if (! in_array($activity->status, [ActivityStatus::Draft, ActivityStatus::AwaitingDecision, ActivityStatus::Returned], true)) {
             throw new ActivityWorkflowException('A decision can only be recorded for an activity that has not yet been decided.');
+        }
+
+        if ($activity->isDirectToCeo() && ! $user->can('activities.decide')) {
+            throw new AuthorizationException('This memo was sent directly to the CEO, who decides it in the system. Its decision cannot be recorded on the CEO\'s behalf.');
         }
 
         if (trim($memoReference) === '') {
@@ -318,6 +381,7 @@ class ActivityLifecycle
         if (! in_array($activity->status, [ActivityStatus::Approved, ActivityStatus::Postponed, ActivityStatus::AwaitingDecision], true)) {
             throw new ActivityWorkflowException("An activity that is {$activity->status->label()} cannot be postponed.");
         }
+        $this->assertNotReservedForCeo($activity, $user);
 
         if (! $newStart) {
             $this->move($activity, ActivityStatus::Postponed, $reason, $user, extra: ['status_reason' => $reason]);
@@ -705,7 +769,13 @@ class ActivityLifecycle
             $this->assertHasTeam($activity);
         }
 
-        return DB::transaction(function () use ($activity, $decision, $comment, $mode, $user, $memoReference, $memoDate, $documentId) {
+        // A memo sent directly to the CEO goes back to the Head of Department, never to the COS/ACOS office.
+        $toDepartment = $decision === DecisionType::Returned && $activity->isDirectToCeo();
+        if ($toDepartment && ! $this->departmentHasHead($activity)) {
+            throw new ActivityWorkflowException('There is no active Head of Department account for this department to correct the memo. Decline it with your comments instead, or ask the System Administrator to restore the account.');
+        }
+
+        return DB::transaction(function () use ($activity, $decision, $comment, $mode, $user, $memoReference, $memoDate, $documentId, $toDepartment) {
             if ($decision === DecisionType::Approved) {
                 // Under a lock on the team, so two activities sharing an officer cannot both be approved at once.
                 $this->checks->lockStaff($activity->participants()->whereNotNull('staff_id')->pluck('staff_id')->all());
@@ -738,6 +808,14 @@ class ActivityLifecycle
             }
 
             $label = $mode === DecisionMode::RecordedOnBehalf ? "{$decision->label()} (recorded on the CEO's behalf, memo {$memoReference})" : $decision->label();
+
+            if ($toDepartment) {
+                $this->move($activity, ActivityStatus::ReturnedToHod, trim('Returned by the CEO to the Head of Department for correction'.($comment ? ": {$comment}" : '')), $user, extra: $extra + ['review_office' => null]);
+                $this->alerts->toDepartment($activity, ActivityAlert::returnedForCorrection($activity, byCeo: true));
+
+                return $record;
+            }
+
             $this->move($activity, $decision->status(), trim($label.($comment ? ": {$comment}" : '')), $user, extra: $extra);
 
             $this->alerts->toStaffOfCeo(ActivityAlert::decidedForOffice($activity, $decision));

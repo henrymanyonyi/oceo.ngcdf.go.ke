@@ -18,8 +18,11 @@ it('sets up every configuration a new installation needs', function () {
         ->and(Department::pluck('name')->sort()->values()->all())->toBe(collect(ReferenceDataSeeder::DEPARTMENTS)->sort()->values()->all())
         ->and(Office::where('is_headquarters', true)->count())->toBe(1)
         ->and(Office::whereNotNull('region_id')->count())->toBe(10)
-        ->and(ActivityCategory::count())->toBe(5)
+        // The five starting categories, Policy and Management, and Other (specify) (4 November 2026).
+        ->and(ActivityCategory::count())->toBe(7)
+        ->and(ActivityCategory::where('requires_detail', true)->pluck('name')->all())->toBe(['Other'])
         ->and(CostCategory::where('code', 'dsa')->exists())->toBeTrue()
+        ->and(CostCategory::where('code', 'external_allowance')->exists())->toBeTrue()
         ->and(AppSetting::whereIn('key', array_keys(AppSettings::DEFINITIONS))->count())->toBe(count(AppSettings::DEFINITIONS))
         ->and(DsaRate::standard()->pluck('amount', 'job_grade')->all())->toBe(DsaRate::STANDARD)
         ->and(DsaRate::whereNotNull('destination_category')->exists())->toBeFalse();

@@ -6,10 +6,19 @@
     $returned = $s === ActivityStatus::ReturnedToHod;
     $hasMemo = $a->documents->contains('kind', \App\Models\ActivityDocument::KIND_MEMO);
     $blocking = collect($issues)->where('blocking', true);
+    $directBack = $returned && $a->isDirectToCeo();
+    $submitLabel = match (true) {
+        $directBack => 'Resubmit to the CEO',
+        $returned => 'Resubmit for review',
+        default => 'Submit memo',
+    };
 @endphp
 
 <x-ui.page icon="fa-envelope-open-text" :title="$a->title" :subtitle="$a->reference.' · '.($a->organisingDepartment?->name ?? 'No department').' · '.Ui::dateRange($a->start_date, $a->end_date)">
-    <x-slot:pills><x-ui.status :status="$s" /></x-slot:pills>
+    <x-slot:pills>
+        <x-ui.status :status="$s" />
+        @if ($a->submission_route)<x-ui.badge :classes="$a->submission_route->badgeClasses()" :icon="$a->submission_route->icon()">{{ $a->submission_route->label() }}</x-ui.badge>@endif
+    </x-slot:pills>
     <x-slot:actions>
         <a href="{{ route('memos.index') }}" wire:navigate class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-arrow-left text-xs"></i>Memos</a>
         <a href="{{ route('memos.document', $a) }}" target="_blank" rel="noopener" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-file-pdf text-xs text-red-600"></i>Preview memo</a>
@@ -24,7 +33,7 @@
                 <button type="button" wire:click="openHodAction('showReturnToOfficer')" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-reply text-xs"></i>Return to the officer</button>
                 <button type="button" wire:click="openHodAction('showForward')" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-share text-xs"></i>Forward</button>
             @elseif ($s !== ActivityStatus::WithHod)
-                <button type="button" wire:click="openSubmit" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-paper-plane text-xs"></i>{{ $returned ? 'Resubmit for review' : 'Submit for review' }}</button>
+                <button type="button" wire:click="openSubmit" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-paper-plane text-xs"></i>{{ $submitLabel }}</button>
             @endif
         @endif
     </x-slot:actions>
@@ -35,7 +44,7 @@
             @if ($a->isWithPreparer())
                 {{ $s === ActivityStatus::ReturnedToPreparer ? 'Returned to them for changes.' : 'They are still preparing it.' }} It comes to you for review when they submit it; you cannot change it meanwhile.
             @elseif ($s === ActivityStatus::WithHod)
-                Review it (you can also edit it), then forward it to the Chief of Staff, return it to the officer with comments, or decline it.
+                Review it (you can also edit it), then forward it (through the COS/ACOS office or directly to the CEO), return it to the officer with comments, or decline it.
             @endif
         </div>
     @endif
@@ -44,9 +53,9 @@
         <div class="px-4 py-3 rounded-lg text-sm bg-slate-100 border border-slate-200 text-slate-600"><i class="fa-solid fa-eye mr-2"></i>The CEO has approved this {{ $a->organisingDepartment?->name }} memo and instructed your department to act on it. You can read it and its annexes here; it cannot be changed.@if ($instruction = $a->instructions->firstWhere('department_id', auth()->user()->department_id)) <a href="{{ route('instructions.show', $instruction) }}" wire:navigate class="font-semibold text-emerald-700 hover:underline">Open your instruction</a>@endif</div>
     @elseif ($a->isWithPreparer() || $s === ActivityStatus::WithHod)
     @elseif ($editable && ! $returned)
-        <div class="px-4 py-3 rounded-lg text-sm bg-sky-50 border border-sky-200 text-sky-800"><i class="fa-solid fa-circle-info mr-2"></i>This memo is a draft. Only your department can see it until you press <strong>Submit for review</strong>.</div>
+        <div class="px-4 py-3 rounded-lg text-sm bg-sky-50 border border-sky-200 text-sky-800"><i class="fa-solid fa-circle-info mr-2"></i>This memo is a draft. Only your department can see it until you press <strong>Submit memo</strong> and choose its route: through the COS/ACOS office, or directly to the CEO.</div>
     @elseif ($returned)
-        <div class="px-4 py-3 rounded-lg text-sm bg-orange-50 border border-orange-200 text-orange-800"><i class="fa-solid fa-reply mr-2"></i>Returned to you for correction. Make the changes asked for below, then press <strong>Resubmit for review</strong>.</div>
+        <div class="px-4 py-3 rounded-lg text-sm bg-orange-50 border border-orange-200 text-orange-800"><i class="fa-solid fa-reply mr-2"></i>Returned to you{{ $directBack ? ' by the CEO' : '' }} for correction. Make the changes asked for below, then press <strong>{{ $submitLabel }}</strong>.</div>
     @elseif ($s->isApprovedOrLater() || $s === ActivityStatus::Declined || $s === ActivityStatus::Cancelled)
         <div class="px-4 py-3 rounded-lg text-sm bg-slate-100 border border-slate-200 text-slate-600"><i class="fa-solid fa-lock mr-2"></i>{{ $a->wasDeclinedByHod() ? 'You declined this memo'.($a->status_reason ? ': '.$a->status_reason : '.').' It is kept for reference.' : 'The CEO has decided on this memo. The decision and its history are below.' }}</div>
     @else
@@ -132,7 +141,7 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <x-ui.card title="The memo" icon="fa-clipboard-list" class="lg:col-span-2" padded>
             <dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><dt class="{{ Ui::MICRO }}">Category · type</dt><dd class="text-sm text-slate-700">{{ $a->category?->name }}{{ $a->type ? ' · '.$a->type->name : '' }}</dd></div>
+                <div><dt class="{{ Ui::MICRO }}">Category · type</dt><dd class="text-sm text-slate-700">{{ $a->categoryLabel() }}{{ $a->type ? ' · '.$a->type->name : '' }}</dd></div>
                 <div><dt class="{{ Ui::MICRO }}">Dates</dt><dd class="text-sm text-slate-700 font-numeric">{{ Ui::dateRange($a->start_date, $a->end_date) }} · {{ $a->days }} {{ Str::plural('day', $a->days) }}</dd></div>
                 <div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Purpose</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->purpose }}</dd></div>
                 <div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Justification</dt><dd class="text-sm whitespace-pre-line {{ $a->justification ? 'text-slate-700' : 'text-slate-400 italic' }}">{{ $a->justification ?: 'Not given' }}</dd></div>
@@ -179,17 +188,8 @@
         </x-ui.card>
     </div>
 
-    <x-ui.modal show="showSubmit" :open="$showSubmit" size="slim" icon="fa-paper-plane" :title="$returned ? 'Resubmit for review?' : 'Submit for review?'" :subtitle="$a->reference.' · '.$a->title">
-        @if ($returned)
-            <p class="text-[13px] text-slate-600">It goes back to the <strong>{{ $a->review_office?->label() ?? 'reviewer' }}</strong>, who returned it. You cannot change it while it is being reviewed.</p>
-        @else
-            <x-ui.field label="Send it to" for="s-office" error="office" required>
-                <select id="s-office" wire:model.live="office" class="{{ Ui::CONTROL }} appearance-none pr-8">
-                    @foreach ($offices as $o)<option value="{{ $o->value }}">{{ $o->label() }}</option>@endforeach
-                </select>
-            </x-ui.field>
-            <p class="text-[13px] text-slate-600">The reviewer forwards it to the CEO for decision. You cannot change the memo while it is being reviewed; if something needs correcting, the reviewer will return it to you.</p>
-        @endif
+    <x-ui.modal show="showSubmit" :open="$showSubmit" size="medium" icon="fa-paper-plane" :title="$submitLabel.'?'" :subtitle="$a->reference.' · '.$a->title">
+        <x-memo.route-choice :current="$route" :offices="$offices" :locked="$returned" :reviewOffice="$a->review_office" />
         <x-memo.signing-capacity :designation="$designation" />
         @if ($blocking->isNotEmpty())
             <div class="rounded-lg border border-red-200 bg-red-50 p-3 text-[13px] text-red-800" role="alert">
@@ -199,12 +199,12 @@
         @else
             <p class="text-[13px] text-slate-600"><a href="{{ route('memos.document', $a) }}" target="_blank" rel="noopener" class="font-semibold text-emerald-700 hover:underline">Preview the memo and annexes</a> once more before you send it.</p>
         @endif
-        <x-ui.field :label="$returned ? 'What you changed (optional)' : 'Note to the reviewer (optional)'" for="s-note" error="note">
+        <x-ui.field :label="$returned ? 'What you changed (optional)' : ($route === 'direct' ? 'Note to the CEO (optional)' : 'Note to the reviewer (optional)')" for="s-note" error="note">
             <textarea id="s-note" wire:model="note" rows="3" class="{{ Ui::CONTROL }}" maxlength="2000"></textarea>
         </x-ui.field>
         <x-slot:footer>
             <button type="button" wire:click="$set('showSubmit', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
-            <button type="button" wire:click="submit" wire:loading.attr="disabled" wire:target="submit" class="{{ Ui::BTN_PRIMARY }}" @disabled($blocking->isNotEmpty())><i class="fa-solid fa-paper-plane text-xs"></i><span wire:loading.remove wire:target="submit">{{ $returned ? 'Resubmit for review' : 'Submit for review' }}</span><span wire:loading wire:target="submit">Sending…</span></button>
+            <button type="button" wire:click="submit" wire:loading.attr="disabled" wire:target="submit" class="{{ Ui::BTN_PRIMARY }}" @disabled($blocking->isNotEmpty())><i class="fa-solid fa-paper-plane text-xs"></i><span wire:loading.remove wire:target="submit">{{ $returned ? $submitLabel : ($route === 'direct' ? 'Submit to the CEO' : 'Submit for review') }}</span><span wire:loading wire:target="submit">Sending…</span></button>
         </x-slot:footer>
     </x-ui.modal>
 
@@ -271,10 +271,8 @@
     </x-ui.modal>
 
     {{-- A memo an officer prepared, with the Head for review --}}
-    <x-ui.modal show="showForward" :open="$showForward" size="slim" icon="fa-share" title="Forward this memo for review?" subtitle="On the officer's behalf. It is recorded that you reviewed and forwarded it; the reviewer forwards it to the CEO for decision.">
-        <x-ui.field label="Send it to" for="hf-t" error="forwardTo" required>
-            <select id="hf-t" wire:model.live="forwardTo" class="{{ Ui::CONTROL }} appearance-none pr-8">@foreach ($offices as $o)<option value="{{ $o->value }}">{{ $o->label() }}</option>@endforeach</select>
-        </x-ui.field>
+    <x-ui.modal show="showForward" :open="$showForward" size="medium" icon="fa-share" title="Forward this memo?" subtitle="On the officer's behalf. It is recorded that you reviewed and forwarded it, and the route you chose.">
+        <x-memo.route-choice :current="$route" :offices="$offices" officeModel="forwardTo" />
         <x-memo.signing-capacity :designation="$designation" />
         <x-ui.field label="Note (optional)" for="hf-n" error="note"><textarea id="hf-n" wire:model="note" rows="3" maxlength="2000" class="{{ Ui::CONTROL }}"></textarea></x-ui.field>
         <x-slot:footer>

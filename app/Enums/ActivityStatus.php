@@ -99,12 +99,16 @@ enum ActivityStatus: string
             // Office of the CEO's own drafts go straight to Awaiting decision.
             // Draft → With the Head of Department is an officer submitting a memo prepared through a delegated link.
             self::Draft => [self::UnderReview, self::AwaitingDecision, self::Approved, self::WithHod],
-            // The Head returns it to the officer, declines it, or forwards it to the Chief of Staff for review.
-            self::WithHod => [self::ReturnedToPreparer, self::Declined, self::UnderReview],
+            // The Head returns it to the officer, declines it, or forwards it: for review by the COS/ACOS office,
+            // or directly to the CEO (App\Enums\SubmissionRoute, 4 November 2026).
+            self::WithHod => [self::ReturnedToPreparer, self::Declined, self::UnderReview, self::AwaitingDecision],
             self::ReturnedToPreparer => [self::WithHod],
             self::UnderReview => [self::ReturnedToHod, self::AwaitingDecision],
-            self::ReturnedToHod => [self::UnderReview],
-            self::AwaitingDecision => [self::Approved, self::Returned, self::Declined],
+            // Resubmitted along the route it came: to the reviewer who returned it, or directly to the CEO.
+            self::ReturnedToHod => [self::UnderReview, self::AwaitingDecision],
+            // The CEO returns a memo sent directly to them to the Head of Department (ReturnedToHod), and
+            // any other memo to the Chief of Staff and the Assistant (Returned).
+            self::AwaitingDecision => [self::Approved, self::Returned, self::ReturnedToHod, self::Declined],
             self::Returned => [self::Draft, self::UnderReview, self::ReturnedToHod, self::AwaitingDecision, self::Approved],
             self::Approved => [self::InProgress, self::Postponed, self::Cancelled, self::AwaitingDecision],
             self::InProgress => [self::Completed, self::Cancelled, self::AwaitingDecision],

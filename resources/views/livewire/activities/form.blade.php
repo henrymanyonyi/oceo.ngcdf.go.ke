@@ -23,9 +23,14 @@
                     <x-ui.field label="Category" for="cat" error="activity_category_id" required>
                         <select id="cat" wire:model.live="activity_category_id" class="{{ $sel }}">
                             <option value="">Choose…</option>
-                            @foreach ($categories as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach
+                            @foreach ($categories as $c)<option value="{{ $c->id }}">{{ $c->optionLabel() }}</option>@endforeach
                         </select>
                     </x-ui.field>
+                    @if ($needsCategoryDetail)
+                        <x-ui.field label="Specify the category" for="cat-other" error="category_other" required>
+                            <input id="cat-other" type="text" wire:model="category_other" class="{{ Ui::CONTROL }}" maxlength="150" placeholder="e.g. Partnership review">
+                        </x-ui.field>
+                    @endif
                     <x-ui.field label="Activity type" for="type" error="activity_type_id">
                         <select id="type" wire:model="activity_type_id" class="{{ $sel }}" @disabled($types->isEmpty())>
                             <option value="">{{ $activity_category_id ? 'Choose…' : 'Choose a category first' }}</option>
@@ -76,20 +81,27 @@
             </x-ui.card>
 
             <x-ui.card title="Dates" icon="fa-calendar" padded>
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <x-ui.field label="Planned start" for="start" error="start_date" required>
-                        <input id="start" type="date" wire:model.live="start_date" class="{{ Ui::CONTROL }}" @disabled($activity && ! $activity->status->isFreelyEditable())>
+                @php $locked = $activity && ! $activity->status->isFreelyEditable(); @endphp
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <x-ui.field label="Planned start date" for="start" error="start_date" required>
+                        <input id="start" type="date" wire:model.live="start_date" class="{{ Ui::CONTROL }}" @disabled($locked)>
                     </x-ui.field>
-                    <x-ui.field label="Number of days" for="days" error="days" required>
-                        <input id="days" type="number" min="1" max="120" wire:model.live="days" class="{{ Ui::CONTROL }} font-numeric" @disabled($activity && ! $activity->status->isFreelyEditable())>
+                    <x-ui.field label="Expected completion date" for="end" error="end_date" required>
+                        <input id="end" type="date" wire:model.live="end_date" min="{{ $start_date }}" class="{{ Ui::CONTROL }}" @disabled($locked)>
                     </x-ui.field>
-                    <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
-                        <p class="{{ Ui::MICRO }}">End date · payable nights</p>
-                        <p class="text-[13px] font-bold text-emerald-800 font-numeric" aria-live="polite">{{ $endDate ? Ui::date($endDate) : '—' }} · {{ $nights }} {{ Str::plural('night', $nights) }}</p>
-                        @if ($period)<p class="text-[11px] text-emerald-700" aria-live="polite">{{ $period->summary() }}</p>@endif
+                    <div class="rounded-lg border px-3 py-2.5 sm:col-span-2 {{ $datesBackwards ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50' }}" aria-live="polite">
+                        <p class="{{ Ui::MICRO }}">Total days · total nights</p>
+                        @if ($datesBackwards)
+                            <p class="text-[13px] font-semibold text-red-700">The completion date is before the start date.</p>
+                        @elseif ($period)
+                            <p class="text-[13px] font-bold text-emerald-800 font-numeric">{{ $period->days }} {{ Str::plural('day', $period->days) }} · {{ $period->nights() }} {{ Str::plural('night', $period->nights()) }}</p>
+                            <p class="text-[11px] text-emerald-700">{{ $period->departure() ? 'Nights include the departure night, '.Ui::date($period->departure()).'.' : 'Same-day activity: no night away.' }}</p>
+                        @else
+                            <p class="text-[13px] text-slate-500">Choose both dates.</p>
+                        @endif
                     </div>
                 </div>
-                @if ($activity && ! $activity->status->isFreelyEditable())
+                @if ($locked)
                     <p class="text-[11px] text-amber-700 mt-3"><i class="fa-solid fa-circle-info mr-1"></i>Dates of a submitted or approved activity are changed with Postpone or Extend on the activity page, so the change is recorded.</p>
                 @endif
             </x-ui.card>

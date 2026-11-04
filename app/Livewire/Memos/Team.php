@@ -5,7 +5,10 @@ namespace App\Livewire\Memos;
 use App\Enums\EmploymentType;
 use App\Enums\ExternalCategory;
 use App\Enums\ParticipantRole;
+use App\Enums\RateUnit;
 use App\Enums\TravelMode;
+use App\Livewire\Concerns\EntersCostLines;
+use App\Livewire\Concerns\EntersExternalParticipants;
 use App\Livewire\Concerns\RunsActions;
 use App\Models\Activity;
 use App\Models\CostCategory;
@@ -17,6 +20,8 @@ use App\Models\Staff;
 use App\Rules\DsaGrade;
 use App\Services\AccessLogger;
 use App\Services\ActivityEditor;
+use App\Services\AppSettings;
+use App\Services\DsaCalculator;
 use App\Services\ParticipantChecks;
 use App\Services\StaffRecords;
 use Illuminate\Database\Eloquent\Collection;
@@ -42,6 +47,8 @@ use Livewire\Component;
 #[Layout('layouts.admin')]
 class Team extends Component
 {
+    use EntersCostLines;
+    use EntersExternalParticipants;
     use RunsActions;
 
     public Activity $activity;
@@ -77,19 +84,12 @@ class Team extends Component
 
     public string $groupGrade = '';
 
-    // External participant.
-    public string $externalName = '';
-
-    public string $externalOrganisation = '';
-
-    public string $externalCategory = 'other';
-
     // One participant's days.
     public ?int $participantId = null;
 
     public string $daysStart = '';
 
-    public ?int $daysCount = null;
+    public string $daysEnd = '';
 
     // A planned cost line.
     public ?int $costId = null;
@@ -99,8 +99,6 @@ class Team extends Component
     public string $costParticipantId = '';
 
     public string $costDescription = '';
-
-    public string $costAmount = '';
 
     public string $costTravelMode = '';
 
@@ -128,17 +126,14 @@ class Team extends Component
     {
         $this->reset([
             'showAdd', 'showExternal', 'showGroup', 'groupLabel', 'groupCount', 'groupGrade', 'showRemove', 'showDays', 'showCost', 'showStaffForm',
-            'staffSearch', 'staffDepartment', 'selectedStaff', 'role', 'externalName', 'externalOrganisation', 'externalCategory',
-            'participantId', 'daysStart', 'daysCount', 'costId', 'costCategoryId', 'costParticipantId', 'costDescription', 'costAmount', 'costTravelMode',
+            'staffSearch', 'staffDepartment', 'selectedStaff', 'role', 'roleOther', 'participantId', 'daysStart', 'daysEnd',
+            'costId', 'costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode',
+            ...self::EXTERNAL_FIELDS,
         ]);
+        $this->resetCostMethod();
         $this->activity->refresh();
         $this->toast($message);
         $this->warn($warnings);
-    }
-
-    private function roleRule(): string
-    {
-        return 'in:'.implode(',', array_column(ParticipantRole::cases(), 'value'));
     }
 
     // ── Team ───────────────────────────────────────────────────────────
@@ -148,10 +143,10 @@ class Team extends Component
         $this->validate([
             'selectedStaff' => ['required', 'array', 'min:1'],
             'selectedStaff.*' => ['integer', 'exists:staff,id'],
-            'role' => ['required', $this->roleRule()],
-        ], ['selectedStaff.required' => 'Tick at least one officer.'], ['selectedStaff' => 'officers']);
+            ...$this->roleRules(),
+        ], ['selectedStaff.required' => 'Tick at least one officer.'], ['selectedStaff' => 'officers', 'roleOther' => 'role']);
 
-        $result = $this->attempt(fn () => $editor->addStaff($this->activity, array_map('intval', $this->selectedStaff), ParticipantRole::from($this->role), Auth::user()));
+        $result = $this->attempt(fn () => $editor->addStaff($this->activity, array_map('intval', $this->selectedStaff), ParticipantRole::from($this->role), Auth::user(), roleOther: $this->roleOther));
 
         if (is_array($result)) {
             $this->done($result['added'].' added to the team.', $result['warnings']);
@@ -185,21 +180,32 @@ class Team extends Component
         $this->selectedStaff = ($shown->diff($selected)->isEmpty() ? $selected->diff($shown) : $selected->merge($shown))->unique()->values()->all();
     }
 
+    /** Add an external participant, or change one ($id). */
+    public function openExternal(?int $id = null): void
+    {
+        $this->resetErrorBag();
+        $this->reset([...self::EXTERNAL_FIELDS, 'role', 'roleOther']);
+        $this->externalStart = $this->activity->start_date->toDateString();
+        $this->externalEnd = $this->activity->end_date->toDateString();
+
+        if ($id) {
+            $this->fillExternal($this->activity->participants()->where('is_external', true)->findOrFail($id));
+        }
+
+        $this->showExternal = true;
+    }
+
     public function addExternal(ActivityEditor $editor): void
     {
-        $this->validate([
-            'externalName' => ['required', 'string', 'max:255'],
-            'externalOrganisation' => ['nullable', 'string', 'max:255'],
-            'externalCategory' => ['required', 'in:'.implode(',', array_column(ExternalCategory::cases(), 'value'))],
-            'role' => ['required', $this->roleRule()],
-        ], [], ['externalName' => 'name', 'externalOrganisation' => 'organisation']);
+        $this->validate($this->externalRules(), $this->externalMessages(), self::EXTERNAL_ATTRIBUTES);
 
-        if ($this->attempt(fn () => $editor->addExternal($this->activity, [
-            'external_name' => $this->externalName,
-            'external_organisation' => $this->externalOrganisation ?: null,
-            'external_category' => ExternalCategory::from($this->externalCategory),
-        ], ParticipantRole::from($this->role), Auth::user()))) {
-            $this->done('External participant added.');
+        $participant = $this->externalId ? $this->activity->participants()->where('is_external', true)->findOrFail($this->externalId) : null;
+        $result = $this->attempt(fn () => $participant
+            ? $editor->updateExternal($participant, $this->externalData(), ParticipantRole::from($this->role), Auth::user())
+            : $editor->addExternal($this->activity, $this->externalData(), ParticipantRole::from($this->role), Auth::user()));
+
+        if ($result !== null) {
+            $this->done($participant ? 'External participant updated.' : 'External participant added.');
         }
     }
 
@@ -210,13 +216,14 @@ class Team extends Component
             'groupLabel' => ['required', 'string', 'max:255'],
             'groupCount' => ['required', 'integer', 'min:1', 'max:500'],
             'groupGrade' => ['required', new DsaGrade(EmploymentType::Attachee)],
-            'role' => ['required', $this->roleRule()],
-        ], [], ['groupLabel' => 'who they are', 'groupCount' => 'number', 'groupGrade' => 'DSA scale']);
+            ...$this->roleRules(),
+        ], [], ['groupLabel' => 'who they are', 'groupCount' => 'number', 'groupGrade' => 'DSA scale', 'roleOther' => 'role']);
 
         if ($this->attempt(fn () => $editor->addGroup($this->activity, [
             'group_label' => $this->groupLabel,
             'headcount' => $this->groupCount,
             'job_grade' => $this->groupGrade,
+            'role_other' => $this->roleOther,
         ], ParticipantRole::from($this->role), Auth::user()))) {
             $this->done("{$this->groupCount} × {$this->groupLabel} added. DSA is worked out for each of them.");
         }
@@ -244,7 +251,7 @@ class Team extends Component
         $this->resetErrorBag();
         $this->participantId = $id;
         $this->daysStart = $participant->startOn($this->activity)->toDateString();
-        $this->daysCount = $participant->plannedDays($this->activity);
+        $this->daysEnd = $participant->endOn($this->activity)->toDateString();
         $this->showDays = true;
     }
 
@@ -252,20 +259,16 @@ class Team extends Component
     {
         $this->validate([
             'daysStart' => ['required', 'date', 'after_or_equal:'.$this->activity->start_date->toDateString(), 'before_or_equal:'.$this->activity->end_date->toDateString()],
-            'daysCount' => ['required', 'integer', 'min:1', 'max:'.$this->activity->days],
+            'daysEnd' => ['required', 'date', 'after_or_equal:daysStart', 'before_or_equal:'.$this->activity->end_date->toDateString()],
         ], [
             'daysStart.after_or_equal' => 'The first day must be within the activity.',
             'daysStart.before_or_equal' => 'The first day must be within the activity.',
-        ], ['daysStart' => 'first day', 'daysCount' => 'number of days']);
+            'daysEnd.after_or_equal' => 'The last day cannot be before the first day.',
+            'daysEnd.before_or_equal' => 'The last day must be within the activity, which ends '.$this->activity->end_date->format('d M Y').'.',
+        ], ['daysStart' => 'first day', 'daysEnd' => 'last day']);
 
         $start = Carbon::parse($this->daysStart);
-        $end = $start->copy()->addDays($this->daysCount - 1);
-
-        if ($end->gt($this->activity->end_date)) {
-            $this->addError('daysCount', sprintf('From %s the activity has only %d days left.', $start->format('d M Y'), (int) $start->diffInDays($this->activity->end_date) + 1));
-
-            return;
-        }
+        $end = Carbon::parse($this->daysEnd);
 
         $participant = $this->activity->participants()->findOrFail($this->participantId);
 
@@ -279,7 +282,8 @@ class Team extends Component
     public function openCost(?int $id = null): void
     {
         $this->resetErrorBag();
-        $this->reset(['costCategoryId', 'costParticipantId', 'costDescription', 'costAmount', 'costTravelMode']);
+        $this->reset(['costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode']);
+        $this->resetCostMethod();
         $this->costId = $id;
 
         if ($id) {
@@ -287,8 +291,8 @@ class Team extends Component
             $this->costCategoryId = (string) $line->cost_category_id;
             $this->costParticipantId = (string) ($line->activity_participant_id ?? '');
             $this->costDescription = (string) $line->description;
-            $this->costAmount = (string) $line->estimated_amount;
             $this->costTravelMode = (string) ($line->travel_mode?->value ?? '');
+            $this->fillCostMethod($line);
         }
 
         $this->showCost = true;
@@ -297,13 +301,13 @@ class Team extends Component
     public function saveCost(ActivityEditor $editor): void
     {
         $this->validate([
-            // DSA is calculated from the team and location, never typed in.
-            'costCategoryId' => ['required', Rule::exists('cost_categories', 'id')->where(fn ($q) => $q->where('code', '!=', 'dsa'))],
+            // DSA and external participants' allowances are calculated, never typed in.
+            'costCategoryId' => ['required', Rule::exists('cost_categories', 'id')->where(fn ($q) => $q->whereNotIn('code', DsaCalculator::COMPUTED_CODES))],
             'costParticipantId' => ['nullable', 'integer'],
             'costDescription' => ['nullable', 'string', 'max:255'],
-            'costAmount' => ['required', 'regex:/^\d{1,3}(,?\d{3})*(\.\d{1,2})?$/'],
             'costTravelMode' => ['nullable', 'in:'.implode(',', array_column(TravelMode::cases(), 'value'))],
-        ], ['costAmount.regex' => 'Enter an amount such as 12,500.00.'], ['costCategoryId' => 'cost type', 'costAmount' => 'amount']);
+            ...$this->costMethodRules(),
+        ], $this->costMethodMessages(), ['costCategoryId' => 'cost type'] + $this->costMethodAttributes());
 
         if ($this->costParticipantId && ! $this->activity->participants()->whereKey($this->costParticipantId)->exists()) {
             $this->addError('costParticipantId', 'Choose someone on this team.');
@@ -317,9 +321,8 @@ class Team extends Component
             'cost_category_id' => (int) $this->costCategoryId,
             'activity_participant_id' => $this->costParticipantId ? (int) $this->costParticipantId : null,
             'description' => $this->costDescription ?: null,
-            'estimated_amount' => $this->costAmount,
             'travel_mode' => $this->costTravelMode ?: null,
-        ], Auth::user(), $line)) !== null) {
+        ] + $this->costMethodData(), Auth::user(), $line)) !== null) {
             $this->done('Planned cost saved.');
         }
     }
@@ -405,7 +408,9 @@ class Team extends Component
             'externalCategories' => ExternalCategory::cases(),
             'grades' => DsaRate::grades(),
             'travelModes' => TravelMode::cases(),
-            'costCategories' => CostCategory::query()->active()->where('code', '!=', 'dsa')->ordered()->get(['id', 'name']),
+            'costCategories' => CostCategory::query()->active()->whereNotIn('code', DsaCalculator::COMPUTED_CODES)->ordered()->get(['id', 'name']),
+            'rateUnits' => RateUnit::cases(),
+            'dsaUnit' => RateUnit::forDsaBasis((string) app(AppSettings::class)->get('dsa_basis')),
             'departments' => Department::query()->active()->ordered()->get(['id', 'name']),
             'designations' => Designation::query()->active()->ordered()->get(['id', 'name']),
             'offices' => Office::query()->active()->ordered()->get(['id', 'name']),

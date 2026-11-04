@@ -35,7 +35,7 @@ it('opens and saves the edit form for a draft with no notes, outputs or memo num
         ->assertSet('notes', '')
         ->set('title', 'Proposal review, Western Region (revised)')
         ->set('notes', 'Venue moved to Kakamega town')
-        ->set('days', 4)
+        ->set('end_date', $activity->start_date->copy()->addDays(3)->toDateString())
         ->call('save')
         ->assertHasNoErrors()
         ->assertRedirect(route('activities.show', $activity));
@@ -81,7 +81,7 @@ it('lets an approved activity be corrected but not re-dated through the form', f
 
     // A crafted request cannot move the dates around Postpone and Extend.
     Livewire::actingAs($cos)->test(Form::class, ['activity' => $activity->fresh()])
-        ->set('days', 9)
+        ->set('end_date', $activity->start_date->copy()->addDays(8)->toDateString())
         ->call('save')
         ->assertDispatched('notify', type: 'error');
 

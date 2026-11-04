@@ -65,6 +65,7 @@
         table.grid .mid { text-align: center; white-space: nowrap; }
         table.grid tr.total td { font-weight: bold; }
         table.people { width: 70%; }
+        table.duration { width: 80%; }
         .note { font-size: 9.5pt; }
     </style>
 </head>
@@ -111,7 +112,11 @@
     <div class="annex">
         <div class="title">Annex: A</div>
         <div class="heading">Activity Budget Request</div>
-        <p>The following officers will be attending the activity, {{ $period->summary() }}, from {{ $a->start_date->format('jS F Y') }} to {{ $a->end_date->format('jS F Y') }}, at {{ $a->locationSummary() ?: 'the venue stated' }}:</p>
+        <p>The following officers will be attending the activity, from {{ $a->start_date->format('jS F Y') }} (planned start) to {{ $a->end_date->format('jS F Y') }} (expected completion), at {{ $a->locationSummary() ?: 'the venue stated' }}:</p>
+        <table class="grid duration">
+            <tr><th>PLANNED START</th><th>EXPECTED COMPLETION</th><th class="mid">TOTAL DAYS</th><th class="mid">TOTAL NIGHTS</th></tr>
+            <tr><td>{{ $a->start_date->format('d M Y') }}</td><td>{{ $a->end_date->format('d M Y') }}</td><td class="mid">{{ $period->days }}</td><td class="mid">{{ $period->nights() }}@if ($period->departure()) (from {{ $period->departure()->format('d M Y') }})@endif</td></tr>
+        </table>
 
         <div class="title">BUDGET</div>
         <table class="grid">
@@ -135,14 +140,7 @@
                 <tr class="total"><td colspan="6">Total</td><td class="num">{{ $kes($total) }}</td></tr>
             </tbody>
         </table>
-        <p class="note">
-            @if ($nightsBasis)
-                DSA is paid per night: for an activity of two days or more, the night before the start (departure) and every night up to the end date; none for a same-day activity.
-            @else
-                DSA is paid per activity day.
-            @endif
-            Each officer's DSA follows their scale and their own days, at the rate in force on the start date. "(adjusted)" marks a DSA amount the Office of the CEO changed with a recorded reason.
-        </p>
+        @if ($adjusted)<p class="note">"(adjusted)" marks an amount the Office of the CEO changed with a recorded reason.</p>@endif
 
         @include('memos.partials.signatures', ['signatures' => $signatures])
     </div>
@@ -165,6 +163,28 @@
                 @endforelse
             </tbody>
         </table>
+
+        @if ($externalPayments !== [])
+            <div class="title" style="margin: 4pt 0 8pt;">External participants: payments</div>
+            <table class="grid">
+                <thead><tr><th class="num">No.</th><th>Name</th><th>Designation</th><th>Dates</th><th class="mid">DAYS / NIGHTS</th><th>RATE</th><th class="mid">PAID FOR</th><th class="num">AMOUNT (KSHS)</th></tr></thead>
+                <tbody>
+                    @foreach ($externalPayments as $i => $r)
+                        <tr>
+                            <td class="num">{{ $i + 1 }}.</td>
+                            <td>{{ $r['name'] }}</td>
+                            <td>{{ $r['designation'] }}</td>
+                            <td class="mid">{{ $r['from']->format('d M') }} to {{ $r['to']->format('d M Y') }}</td>
+                            <td class="mid">{{ $r['days'] }} / {{ $r['nights'] }}</td>
+                            <td>{{ $r['rate'] }}</td>
+                            <td class="mid">{{ $r['units'] }}</td>
+                            <td class="num">{{ $kes($r['amount']) }}</td>
+                        </tr>
+                    @endforeach
+                    <tr class="total"><td colspan="7">Total, included in the budget above</td><td class="num">{{ $kes(collect($externalPayments)->sum('amount')) }}</td></tr>
+                </tbody>
+            </table>
+        @endif
     </div>
 </body>
 </html>

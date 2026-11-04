@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\ActivityStatus;
 use App\Enums\ParticipantRole;
 use App\Enums\ReviewOffice;
+use App\Enums\SubmissionRoute;
 use App\Exceptions\ActivityWorkflowException;
 use App\Models\Activity;
 use App\Models\ActivityDocument;
@@ -58,7 +59,7 @@ class DelegatedMemos
     /** The memo fields an officer fills in, as on the memo form. */
     public const FIELDS = [
         'title', 'purpose', 'expected_outputs', 'justification', 'risks', 'target_audience', 'notes',
-        'activity_category_id', 'activity_type_id', 'start_date', 'days', 'requested_budget',
+        'activity_category_id', 'category_other', 'activity_type_id', 'start_date', 'days', 'requested_budget',
     ];
 
     public function __construct(
@@ -175,14 +176,14 @@ class DelegatedMemos
      * The Head forwards the memo, on the officer's behalf, for review by the Assistant or the Chief of Staff;
      * the existing review and the CEO's decision follow. $acting: the Head signs as acting.
      */
-    public function forward(Activity $memo, User $hod, ReviewOffice $office = ReviewOffice::ChiefOfStaff, ?string $note = null, bool $acting = false): void
+    public function forward(Activity $memo, User $hod, ReviewOffice $office = ReviewOffice::ChiefOfStaff, ?string $note = null, bool $acting = false, SubmissionRoute $route = SubmissionRoute::Review): void
     {
-        DB::transaction(function () use ($memo, $hod, $office, $note, $acting) {
+        DB::transaction(function () use ($memo, $hod, $office, $note, $acting, $route) {
             $locked = $this->locked($memo);
             if ($locked->status !== ActivityStatus::WithHod) {
                 throw new ActivityWorkflowException('Only a memo with you for review can be forwarded.');
             }
-            $this->lifecycle->submitForReview($locked, $hod, $office, $note, $acting);
+            $this->lifecycle->submit($locked, $hod, $route, $office, $note, $acting);
             $this->tellPreparer($memo, 'memo_request_forwarded', [
                 'subject' => "Memo {$memo->reference} forwarded",
                 'line' => "The Head of Department has forwarded memo {$memo->reference}, which you prepared, to the Office of the CEO.",
@@ -306,11 +307,11 @@ class DelegatedMemos
     }
 
     /** @return list<string> warnings, such as an officer near their field-day limit */
-    public function addOfficers(SubmissionLink $link, array $staffIds, ParticipantRole $role): array
+    public function addOfficers(SubmissionLink $link, array $staffIds, ParticipantRole $role, ?string $roleOther = null): array
     {
         $memo = $this->editableMemo($link);
 
-        return $this->editor->asPreparer($memo, $link->recipient_name, fn () => $this->editor->addStaff($memo, array_map('intval', $staffIds), $role, $this->head($link))['warnings']);
+        return $this->editor->asPreparer($memo, $link->recipient_name, fn () => $this->editor->addStaff($memo, array_map('intval', $staffIds), $role, $this->head($link), roleOther: $roleOther)['warnings']);
     }
 
     public function removeParticipant(SubmissionLink $link, int $participantId): void
@@ -320,7 +321,7 @@ class DelegatedMemos
         $this->editor->asPreparer($memo, $link->recipient_name, fn () => $this->editor->removeParticipant($participant, $this->head($link)));
     }
 
-    /** @param  array{cost_category_id: int|string, description: ?string, estimated_amount: string, activity_participant_id?: int|string|null}  $data */
+    /** @param  array{cost_category_id: int|string, description: ?string, calculation_method?: ?string, unit_rate?: ?string, quantity?: ?int, estimated_amount?: ?string, activity_participant_id?: int|string|null}  $data */
     public function saveCost(SubmissionLink $link, array $data): void
     {
         $memo = $this->editableMemo($link);
