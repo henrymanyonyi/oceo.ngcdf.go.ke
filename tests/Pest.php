@@ -5,6 +5,7 @@ use App\Enums\ParticipantRole;
 use App\Models\Activity;
 use App\Models\ActivityCategory;
 use App\Models\ActivityDocument;
+use App\Models\ActivityType;
 use App\Models\BudgetLine;
 use App\Models\County;
 use App\Models\Department;
@@ -136,4 +137,27 @@ function approvedBudgetLine(Department $department, string $financialYear, strin
     $budget->forceFill(['status' => BudgetStatus::Approved, 'approved_at' => now()])->save();
 
     return $budget->lines()->create(['department_id' => $department->id, 'financial_year' => $financialYear, 'code' => $code, 'name' => $name, 'amount' => $amount]);
+}
+
+/**
+ * Every field of step 1 of a Head of Department's memo, "About the activity" (all required since
+ * 4 November 2026), for Livewire::test(Form::class)->fill(memoAbout()). A category with a type, and that type.
+ *
+ * @return array<string, string>
+ */
+function memoAbout(array $overrides = []): array
+{
+    $type = ActivityType::query()->active()->firstOrFail();
+
+    return array_merge([
+        'title' => 'ICT Department Quarterly Systems Review and Staff Training',
+        'activity_category_id' => (string) $type->activity_category_id,
+        'activity_type_id' => (string) $type->id,
+        'purpose' => 'Review departmental systems and train staff.',
+        'justification' => 'The departmental systems are due for their quarterly review.',
+        'expected_outputs' => 'A review report and trained staff.',
+        'risks' => 'Systems downtime if the review is delayed.',
+        'target_audience' => 'ICT staff and invited departmental representatives',
+        'notes' => 'At the Board headquarters.',
+    ], $overrides);
 }

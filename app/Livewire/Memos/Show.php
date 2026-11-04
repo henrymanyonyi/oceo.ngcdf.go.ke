@@ -6,6 +6,7 @@ use App\Enums\ActivityStatus;
 use App\Enums\ReviewOffice;
 use App\Enums\SubmissionRoute;
 use App\Livewire\Concerns\RunsActions;
+use App\Livewire\Concerns\SubmitsMemo;
 use App\Models\Activity;
 use App\Models\ActivityDocument;
 use App\Models\Constituency;
@@ -30,18 +31,17 @@ use Livewire\WithFileUploads;
  * A Head of Department's view of one of their department's memos: the
  * details, supporting documents, where it is and its history, with the
  * actions open to them (edit, add locations, attach, preview the generated
- * memo and annexes, submit or resubmit, discard a draft). The team and
- * costs are built on Memos\Team.
+ * memo and annexes, submit or resubmit, discard a draft). The memo itself,
+ * its venue, team and costs are built on one page, Memos\Compose.
  */
 #[Layout('layouts.admin')]
 class Show extends Component
 {
     use RunsActions;
+    use SubmitsMemo;
     use WithFileUploads;
 
     public Activity $activity;
-
-    public bool $showSubmit = false;
 
     public bool $showDiscard = false;
 
@@ -56,16 +56,6 @@ class Show extends Component
     public bool $showDecline = false;
 
     public string $hodReason = '';
-
-    public string $office = 'assistant_chief_of_staff';
-
-    /** How the Head sends the memo on (App\Enums\SubmissionRoute): through the COS/ACOS office, or directly to the CEO. */
-    public string $route = 'review';
-
-    public string $note = '';
-
-    /** The Head signs as acting ("Ag." before their designation) on this submission. */
-    public bool $acting = false;
 
     public $document = null;
 
@@ -98,39 +88,6 @@ class Show extends Component
         abort_unless($activity->isReadableBy(Auth::user()), 403);
         $this->activity = $activity;
         $log->log(AccessLogger::VIEW, $activity); // CF-06: every view of an activity
-    }
-
-    public function openSubmit(): void
-    {
-        $this->office = ($this->activity->review_office ?? ReviewOffice::AssistantChiefOfStaff)->value;
-        // A memo returned for correction goes back along the route it came; a new one starts on the review route.
-        $this->route = ($this->activity->status === ActivityStatus::ReturnedToHod ? $this->activity->route() : SubmissionRoute::Review)->value;
-        $this->note = '';
-        $this->acting = (bool) $this->activity->hod_acting;
-        $this->resetErrorBag();
-        $this->showSubmit = true;
-    }
-
-    public function submit(ActivityLifecycle $lifecycle): void
-    {
-        $this->validate([
-            'route' => ['required', 'in:'.implode(',', array_column(SubmissionRoute::cases(), 'value'))],
-            'office' => ['required', 'in:'.implode(',', array_column(ReviewOffice::cases(), 'value'))],
-            'note' => ['nullable', 'string', 'max:2000'],
-            'acting' => ['boolean'],
-        ], [], ['note' => 'note', 'route' => 'route']);
-
-        $resubmitting = $this->activity->status === ActivityStatus::ReturnedToHod;
-
-        if ($this->attempt(fn () => $lifecycle->submit($this->activity, Auth::user(), SubmissionRoute::from($this->route), ReviewOffice::from($this->office), $this->note, $this->acting)) !== null) {
-            $this->showSubmit = false;
-            $this->activity->refresh();
-            $this->toast(match (true) {
-                $this->activity->isDirectToCeo() => ($resubmitting ? 'Resubmitted' : 'Submitted').' directly to the CEO, who has been told.',
-                $resubmitting => 'Resubmitted. The reviewer has been told.',
-                default => 'Submitted for review. The '.$this->activity->review_office?->label().' has been told.',
-            });
-        }
     }
 
     public function openHodAction(string $action): void
@@ -209,7 +166,7 @@ class Show extends Component
     {
         $location = $this->activity->locations()->findOrFail($id);
 
-        if ($this->attempt(fn () => $editor->removeLocation($location, Auth::user()), 'Location removed. Add the right one with Edit memo.')) {
+        if ($this->attempt(fn () => $editor->removeLocation($location, Auth::user()), 'Location removed. Add the right one with Continue editing.')) {
             $this->activity->refresh();
         }
     }

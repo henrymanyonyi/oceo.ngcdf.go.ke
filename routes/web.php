@@ -67,9 +67,9 @@ Route::middleware(['auth:sanctum', config('jetstream.auth_session'), 'verified',
     // department's memos (Activity::scopeVisibleTo), checked again in every service.
     Route::get('/memos', Livewire\Memos\Board::class)->middleware('permission:memos.originate|memos.review')->name('memos.index');
     Route::middleware('permission:memos.originate')->group(function () {
-        Route::get('/memos/create', Livewire\Activities\Form::class)->name('memos.create');
+        Route::get('/memos/create', Livewire\Memos\Compose::class)->name('memos.create');
         Route::get('/memos/{activity}', Livewire\Memos\Show::class)->name('memos.show');
-        Route::get('/memos/{activity}/edit', Livewire\Activities\Form::class)->name('memos.edit');
+        Route::get('/memos/{activity}/edit', Livewire\Memos\Compose::class)->name('memos.edit');
         Route::get('/memos/{activity}/team', Livewire\Memos\Team::class)->name('memos.team');
     });
     // The CEO's instructions to Finance (imprest) and Procurement (tickets) on approved memos.

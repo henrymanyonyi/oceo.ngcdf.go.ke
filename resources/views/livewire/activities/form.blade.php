@@ -7,6 +7,70 @@
     };
 @endphp
 
+{{-- One real root element: Livewire must not take the @if marker for the root when the builder page refreshes. --}}
+<div>
+@if ($embedded)
+    {{-- The first two steps of the one-page memo builder (Memos\Compose). --}}
+    <form wire:submit="save" class="flex flex-col gap-8">
+        <x-memo.step id="step-details" number="1" title="About the activity" line="What the activity is and why it is needed. This is the body of the memo; every field is needed." :done="$aboutDone">
+            <x-ui.card title="The activity" icon="fa-clipboard-list" padded>
+                @include('livewire.activities.partials.form-about')
+            </x-ui.card>
+            <details class="group {{ \App\Support\Ui::CARD }}" @if ($memo_sections !== []) open @endif>
+                <summary class="cursor-pointer list-none flex items-center justify-between gap-3 px-5 py-3 text-[13px] font-semibold text-slate-600 hover:bg-slate-50">
+                    <span><i class="fa-solid fa-list-ol text-[11px] text-slate-400 mr-2"></i>More memo sections <span class="font-normal text-slate-400">(optional{{ $memo_sections !== [] ? ', '.count($memo_sections).' added' : '' }})</span></span>
+                    <i class="fa-solid fa-chevron-down text-[10px] text-slate-400 transition group-open:rotate-180"></i>
+                </summary>
+                <div class="px-5 pb-5 pt-1 border-t border-slate-100">
+                    @include('livewire.activities.partials.form-sections')
+                </div>
+            </details>
+            @unless ($aboutDone)
+                <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+                    <p class="text-[12px] text-emerald-900"><i class="fa-solid fa-circle-info mr-1.5"></i>Fill in every field above to go on to step 2.</p>
+                    <button type="button" wire:click="continueToDates" wire:loading.attr="disabled" wire:target="continueToDates" class="{{ Ui::BTN_PRIMARY }}">Continue to step 2<i class="fa-solid fa-arrow-down text-xs"></i></button>
+                </div>
+            @endunless
+        </x-memo.step>
+
+        <x-memo.step id="step-dates" number="2" title="Reference, dates and budget" line="The memo's reference and date, when the activity runs, and the budget it is charged to." :done="(bool) $activity" :locked="! $aboutDone">
+            @if (! $aboutDone)
+                <x-memo.step-locked message="Opens when every field in step 1 is filled in." />
+            @else
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                <x-ui.card title="Dates" icon="fa-calendar" padded>
+                    @include('livewire.activities.partials.form-dates')
+                </x-ui.card>
+                <x-ui.card title="Reference" icon="fa-envelope-open-text" padded>
+                    @include('livewire.activities.partials.form-source')
+                </x-ui.card>
+            </div>
+            <x-ui.card title="Budget" icon="fa-coins" padded>
+                @include('livewire.activities.partials.form-costing')
+            </x-ui.card>
+            @endif
+        </x-memo.step>
+
+        @if ($aboutDone)
+        {{-- Saving keeps the Head on the page; the first save creates the draft and opens the next steps. --}}
+        <div class="sticky bottom-0 z-10 -mx-1 px-1 pb-1">
+            <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/95 backdrop-blur px-4 py-3 shadow-lg shadow-slate-900/5 sm:ml-11">
+                <p class="text-[12px] text-slate-500" aria-live="polite">
+                    <span wire:dirty class="text-amber-700"><i class="fa-solid fa-circle text-[7px] mr-1.5 align-middle"></i>Unsaved changes</span>
+                    <span wire:dirty.remove>
+                        @if ($activity)<i class="fa-solid fa-cloud-arrow-up text-emerald-600 mr-1.5"></i>Draft {{ $activity->reference }} · saved
+                        @else<i class="fa-solid fa-circle-info text-slate-400 mr-1.5"></i>Save the draft to add the venue, team and costs.
+                        @endif
+                    </span>
+                </p>
+                <button type="submit" class="{{ Ui::BTN_PRIMARY }}" wire:loading.attr="disabled" wire:target="save,memo">
+                    <i class="fa-solid fa-floppy-disk text-xs"></i><span wire:loading.remove wire:target="save">{{ $activity ? 'Save changes' : 'Save draft and continue' }}</span><span wire:loading wire:target="save">Saving…</span>
+                </button>
+            </div>
+        </div>
+        @endif
+    </form>
+@else
 <x-ui.page icon="{{ $activity ? 'fa-pen' : 'fa-plus' }}" :title="$activity ? 'Edit '.$activity->reference : ($office ? 'Record activity' : 'Create activity memo')"
     :subtitle="$office ? 'Capture the activity from the departmental memo, work plan or request for approval.' : 'Describe the activity your department intends to carry out. It stays a draft, visible only to your department, until you submit it for review.'">
     <x-slot:actions>
@@ -16,94 +80,15 @@
     <form wire:submit="save" class="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div class="xl:col-span-2 space-y-4">
             <x-ui.card title="The activity" icon="fa-clipboard-list" padded>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <x-ui.field label="Title" for="title" error="title" required class="sm:col-span-2">
-                        <input id="title" type="text" wire:model="title" class="{{ Ui::CONTROL }}" placeholder="e.g. FY2026/27 Proposal Review, Baringo" maxlength="255">
-                    </x-ui.field>
-                    <x-ui.field label="Category" for="cat" error="activity_category_id" required>
-                        <select id="cat" wire:model.live="activity_category_id" class="{{ $sel }}">
-                            <option value="">Choose…</option>
-                            @foreach ($categories as $c)<option value="{{ $c->id }}">{{ $c->optionLabel() }}</option>@endforeach
-                        </select>
-                    </x-ui.field>
-                    @if ($needsCategoryDetail)
-                        <x-ui.field label="Specify the category" for="cat-other" error="category_other" required>
-                            <input id="cat-other" type="text" wire:model="category_other" class="{{ Ui::CONTROL }}" maxlength="150" placeholder="e.g. Partnership review">
-                        </x-ui.field>
-                    @endif
-                    <x-ui.field label="Activity type" for="type" error="activity_type_id">
-                        <select id="type" wire:model="activity_type_id" class="{{ $sel }}" @disabled($types->isEmpty())>
-                            <option value="">{{ $activity_category_id ? 'Choose…' : 'Choose a category first' }}</option>
-                            @foreach ($types as $t)<option value="{{ $t->id }}">{{ $t->name }}</option>@endforeach
-                        </select>
-                    </x-ui.field>
-                    <x-ui.field label="Purpose (objective)" for="purpose" error="purpose" required class="sm:col-span-2" hint="What the activity is for, in a sentence or two.">
-                        <textarea id="purpose" wire:model="purpose" rows="3" class="{{ Ui::CONTROL }}"></textarea>
-                    </x-ui.field>
-                    <x-ui.field label="Introduction and justification" for="justification" error="justification" class="sm:col-span-2" hint="The narration: background, why the activity is needed now, and any letter or Act it responds to. Section 1.0 of the memo; needed before you submit.">
-                        <textarea id="justification" wire:model="justification" rows="5" class="{{ Ui::CONTROL }}"></textarea>
-                    </x-ui.field>
-                    <x-ui.field label="Expected outcomes and deliverables" for="outputs" error="expected_outputs" class="sm:col-span-2" hint="What the department will deliver; compared with the back-to-office report.">
-                        <textarea id="outputs" wire:model="expected_outputs" rows="2" class="{{ Ui::CONTROL }}"></textarea>
-                    </x-ui.field>
-                    <x-ui.field label="Key risks to be mitigated" for="risks" error="risks" class="sm:col-span-2" hint="Section 3.0 of the memo: what could go wrong if the activity does not take place, or during it.">
-                        <textarea id="risks" wire:model="risks" rows="3" class="{{ Ui::CONTROL }}"></textarea>
-                    </x-ui.field>
-                    <x-ui.field label="Participants and stakeholders" for="audience" error="target_audience" class="sm:col-span-2" hint="Who takes part or is targeted, e.g. ICT staff and invited departmental representatives.">
-                        <input id="audience" type="text" wire:model="target_audience" class="{{ Ui::CONTROL }}" maxlength="255">
-                    </x-ui.field>
-                    <x-ui.field label="Notes" for="notes" error="notes" class="sm:col-span-2" hint="Venue, purpose or any other reference detail.">
-                        <textarea id="notes" wire:model="notes" rows="2" class="{{ Ui::CONTROL }}"></textarea>
-                    </x-ui.field>
-                </div>
+                @include('livewire.activities.partials.form-about')
             </x-ui.card>
 
             <x-ui.card title="More memo sections" icon="fa-list-ol" padded>
-                <p class="text-[12px] text-slate-500 mb-3">Add a section when the standard memo does not cover something, for example a programme, the statutory basis or a previous visit. Sections follow Key risks in the memo, numbered in order.</p>
-                <div class="space-y-3">
-                    @foreach ($memo_sections as $i => $section)
-                        <div class="rounded-lg border border-slate-200 p-3 space-y-3" wire:key="section-{{ $i }}">
-                            <div class="flex items-start gap-2">
-                                <x-ui.field label="Section heading" for="sec-h-{{ $i }}" error="memo_sections.{{ $i }}.heading" required class="flex-1">
-                                    <input id="sec-h-{{ $i }}" type="text" wire:model="memo_sections.{{ $i }}.heading" maxlength="150" class="{{ Ui::CONTROL }}" placeholder="e.g. Programme of the visit">
-                                </x-ui.field>
-                                <button type="button" wire:click="removeSection({{ $i }})" class="{{ Ui::BTN_ICON_DANGER }} mt-6" aria-label="Remove this section"><i class="fa-solid fa-xmark text-xs"></i></button>
-                            </div>
-                            <x-ui.field label="Section text" for="sec-b-{{ $i }}" error="memo_sections.{{ $i }}.body" required>
-                                <textarea id="sec-b-{{ $i }}" wire:model="memo_sections.{{ $i }}.body" rows="3" class="{{ Ui::CONTROL }}"></textarea>
-                            </x-ui.field>
-                        </div>
-                    @endforeach
-                </div>
-                @if (count($memo_sections) < 10)
-                    <button type="button" wire:click="addSection" class="{{ Ui::BTN_TINT }} mt-3"><i class="fa-solid fa-plus text-[9px]"></i>Add a section</button>
-                @endif
+                @include('livewire.activities.partials.form-sections')
             </x-ui.card>
 
             <x-ui.card title="Dates" icon="fa-calendar" padded>
-                @php $locked = $activity && ! $activity->status->isFreelyEditable(); @endphp
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <x-ui.field label="Planned start date" for="start" error="start_date" required>
-                        <input id="start" type="date" wire:model.live="start_date" class="{{ Ui::CONTROL }}" @disabled($locked)>
-                    </x-ui.field>
-                    <x-ui.field label="Expected completion date" for="end" error="end_date" required>
-                        <input id="end" type="date" wire:model.live="end_date" min="{{ $start_date }}" class="{{ Ui::CONTROL }}" @disabled($locked)>
-                    </x-ui.field>
-                    <div class="rounded-lg border px-3 py-2.5 sm:col-span-2 {{ $datesBackwards ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50' }}" aria-live="polite">
-                        <p class="{{ Ui::MICRO }}">Total days · total nights</p>
-                        @if ($datesBackwards)
-                            <p class="text-[13px] font-semibold text-red-700">The completion date is before the start date.</p>
-                        @elseif ($period)
-                            <p class="text-[13px] font-bold text-emerald-800 font-numeric">{{ $period->days }} {{ Str::plural('day', $period->days) }} · {{ $period->nights() }} {{ Str::plural('night', $period->nights()) }}</p>
-                            <p class="text-[11px] text-emerald-700">{{ $period->departure() ? 'Nights include the departure night, '.Ui::date($period->departure()).'.' : 'Same-day activity: no night away.' }}</p>
-                        @else
-                            <p class="text-[13px] text-slate-500">Choose both dates.</p>
-                        @endif
-                    </div>
-                </div>
-                @if ($locked)
-                    <p class="text-[11px] text-amber-700 mt-3"><i class="fa-solid fa-circle-info mr-1"></i>Dates of a submitted or approved activity are changed with Postpone or Extend on the activity page, so the change is recorded.</p>
-                @endif
+                @include('livewire.activities.partials.form-dates')
             </x-ui.card>
 
             @if (! $activity || $activity->locations()->doesntExist())
@@ -129,83 +114,11 @@
 
         <div class="space-y-4">
             <x-ui.card title="Source" icon="fa-envelope-open-text" padded>
-                <div class="space-y-4">
-                    @if ($office)
-                        <x-ui.field label="Requesting department" for="dept" error="organising_department_id" required>
-                            <select id="dept" wire:model.live="organising_department_id" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($departments as $d)<option value="{{ $d->id }}">{{ $d->name }}</option>@endforeach</select>
-                        </x-ui.field>
-                        <x-ui.field label="Head of Department" for="hod" error="responsible_hod_id" hint="When you prepare the memo on a Head of Department's behalf. You are recorded as the preparer.">
-                            <select id="hod" wire:model.live="responsible_hod_id" class="{{ $sel }}" @disabled($heads->isEmpty())>
-                                <option value="">{{ $heads->isEmpty() ? 'No account for this department: type the name below' : 'Choose…' }}</option>
-                                @foreach ($heads as $h)<option value="{{ $h->id }}">{{ $h->name }}{{ $h->is_active ? '' : ' (inactive)' }}</option>@endforeach
-                            </select>
-                        </x-ui.field>
-                        @if ($responsible_hod_id === '')
-                            <x-ui.field label="Head of Department's name" for="hod-name" error="responsible_hod_name">
-                                <input id="hod-name" type="text" wire:model="responsible_hod_name" class="{{ Ui::CONTROL }}" maxlength="255" placeholder="e.g. Head of ICT">
-                            </x-ui.field>
-                        @endif
-                    @else
-                        <div>
-                            <p class="{{ Ui::LABEL }}">Requesting department</p>
-                            <p class="text-sm font-semibold text-slate-700">{{ $departments->firstWhere('id', (int) $organising_department_id)?->name ?? auth()->user()->department?->name }}</p>
-                            <p class="text-[11px] text-slate-400 mt-1">You are recorded as the responsible Head of Department.</p>
-                        </div>
-                    @endif
-                    @if ($office)
-                        <x-ui.field label="Memo number" for="ref" error="source_reference">
-                            <input id="ref" type="text" wire:model="source_reference" class="{{ Ui::CONTROL }}" maxlength="100" placeholder="e.g. NGCDF/PPME/12/2026">
-                        </x-ui.field>
-                        <x-ui.field label="Date received" for="recv" error="source_received_on">
-                            <input id="recv" type="date" wire:model="source_received_on" class="{{ Ui::CONTROL }}">
-                        </x-ui.field>
-                    @else
-                        <x-ui.field label="Memo reference" for="ref" error="source_reference" required hint="Printed as REF NO on the memo.">
-                            <input id="ref" type="text" wire:model="source_reference" class="{{ Ui::CONTROL }}" maxlength="100" required placeholder="e.g. NG-CDF BOARD/ICT/004/2026">
-                        </x-ui.field>
-                        <x-ui.field label="Date issued" for="issued" error="issued_on" required hint="Printed as DATE on the memo.">
-                            <input id="issued" type="date" wire:model="issued_on" class="{{ Ui::CONTROL }}" required>
-                        </x-ui.field>
-                    @endif
-                    @unless ($activity)
-                        <x-ui.field :label="$office ? 'Source document' : 'Supporting document (optional)'" for="memo" error="memo" :hint="$office ? 'Memo, concept note or terms of reference (PDF, Word or image, up to 10 MB). Required before submitting to the CEO.' : 'The system generates the memo for you. Attach anything that supports it, such as an invitation letter. PDF, Word or image, up to 10 MB.'">
-                            <input id="memo" type="file" wire:model="memo" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" class="block w-full text-[13px] text-slate-600 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-emerald-50 file:text-emerald-700 file:font-semibold">
-                            <div wire:loading wire:target="memo" class="text-[11px] text-slate-400 mt-1">Uploading…</div>
-                        </x-ui.field>
-                    @endunless
-                </div>
+                @include('livewire.activities.partials.form-source')
             </x-ui.card>
 
             <x-ui.card title="Costing" icon="fa-coins" padded>
-                <div class="space-y-4">
-                    <x-ui.field label="Estimated budget (KES)" for="requested" error="requested_budget" :hint="$office ? 'The department\'s own estimate. The costed plan comes from the team and cost lines.' : 'Your own estimate. After saving, add the team and cost lines under Team and costs; allowances (DSA) are calculated for you.'">
-                        <input id="requested" type="text" inputmode="decimal" wire:model="requested_budget" class="{{ Ui::CONTROL }} font-numeric" placeholder="e.g. 250000">
-                    </x-ui.field>
-                    <x-ui.field label="Budget line" for="budget" error="budget_line_id" :hint="$budgetLines->isEmpty() ? 'No approved budget for this department and year yet.' : null">
-                        <select id="budget" wire:model="budget_line_id" class="{{ $sel }}"><option value="">None</option>@foreach ($budgetLines as $b)<option value="{{ $b->id }}">{{ $b->label() }}</option>@endforeach</select>
-                    </x-ui.field>
-                    @if ($budget)
-                        @php $kes = fn (?int $c) => $c === null ? '—' : 'KES '.\App\Support\Money::format($c); @endphp
-                        <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-[12px] text-slate-600 space-y-1" aria-live="polite">
-                            <p class="{{ Ui::MICRO }}">{{ $budget['department']?->name }} budget · FY {{ $budget['financial_year'] }}</p>
-                            @if ($budget['allocation'] === null)
-                                <p class="text-amber-700">No allocation is recorded for this year yet.</p>
-                            @else
-                                <p class="flex justify-between"><span>Allocation</span><span class="font-numeric">{{ $kes($budget['allocation']) }}</span></p>
-                                <p class="flex justify-between"><span>Spent</span><span class="font-numeric">{{ $kes($budget['spent']) }}</span></p>
-                                <p class="flex justify-between"><span>Committed</span><span class="font-numeric">{{ $kes($budget['committed']) }}</span></p>
-                                <p class="flex justify-between font-semibold {{ $budget['balance'] < 0 ? 'text-red-600' : 'text-slate-800' }}"><span>Available balance</span><span class="font-numeric">{{ $kes($budget['balance']) }}</span></p>
-                            @endif
-                            @if ($budget['pending_count'])<p class="text-purple-700">{{ $kes($budget['pending']) }} more is awaiting decision.</p>@endif
-                        </div>
-                    @endif
-                    @if ($office)
-                    <label class="flex items-start gap-2.5 text-[13px] text-slate-600">
-                        <input type="checkbox" wire:model="count_externals_in_per_head" class="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
-                        <span>Count external participants in cost per head<span class="block text-[11px] text-slate-400">Staff-only per-head cost is always shown as well.</span></span>
-                    </label>
-                    @endif
-                </div>
+                @include('livewire.activities.partials.form-costing')
             </x-ui.card>
 
             <div class="flex justify-end gap-2">
@@ -217,3 +130,6 @@
         </div>
     </form>
 </x-ui.page>
+
+@endif
+</div>

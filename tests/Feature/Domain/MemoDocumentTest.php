@@ -149,6 +149,8 @@ it('lets the Head of Department add risks and extra sections, preview the memo, 
     $this->editor->addStaff($memo, [Staff::factory()->create()->id], ParticipantRole::Member, $this->hod);
 
     Livewire::actingAs($this->hod)->test(Form::class, ['activity' => $memo->fresh()])
+        ->set('activity_category_id', memoAbout()['activity_category_id'])
+        ->fill(memoAbout(['title' => 'Systems review', 'purpose' => 'Review systems', 'justification' => 'Due this quarter.']))
         ->set('risks', 'Systems downtime.')
         ->call('addSection')
         ->call('save')->assertHasErrors(['memo_sections.0.heading', 'memo_sections.0.body'])
