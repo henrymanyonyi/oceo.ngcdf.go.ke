@@ -56,8 +56,9 @@
         <div class="px-4 py-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-600 text-[13px]"><i class="fa-solid fa-pen-ruler mr-1"></i>Being prepared by {{ $b->preparer?->name ?? 'the Office of the CEO' }}. It comes to you for approval when it is submitted.</div>
     @endif
 
-    <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
-        <div class="xl:col-span-2 flex flex-col gap-4">
+    {{-- The lines table needs the full width on a laptop; the summary sits beside it only on wide screens. --}}
+    <div class="grid grid-cols-1 2xl:grid-cols-3 gap-4 items-start">
+        <div class="2xl:col-span-2 flex flex-col gap-4 min-w-0">
             <x-ui.card title="Workplan activities and budget lines" icon="fa-list" :count="$lines->count()">
                 @if ($editable)
                     <x-slot:actions><button type="button" wire:click="openLine" class="{{ Ui::BTN_TINT }}"><i class="fa-solid fa-plus text-[9px]"></i>Add line</button></x-slot:actions>
@@ -181,7 +182,7 @@
             @endif
         </div>
 
-        <div class="flex flex-col gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-1 gap-4 items-start">
             <x-ui.card title="Budget summary" icon="fa-calculator" padded>
                 <dl class="space-y-2 text-[13px]">
                     <div class="flex justify-between gap-3"><dt class="text-slate-500">Proposed by the department</dt><dd><x-ui.money :value="$totals['proposed']" /></dd></div>

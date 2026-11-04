@@ -24,3 +24,10 @@ body.font-sans .font-display {
 [x-cloak] {
     display: none !important;
 }
+
+/* A table's scroll wrapper contains everything in it, including a header's
+   screen-reader-only label (absolutely positioned): without a positioning
+   context that label escaped the scroller and widened the whole page on a phone. */
+.overflow-x-auto {
+    position: relative;
+}

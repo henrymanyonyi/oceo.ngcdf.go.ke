@@ -16,8 +16,9 @@
     @endif>
 
     <div class="flex-shrink-0 bg-white border-b border-gray-200">
-        <div class="px-8 pt-5 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div class="flex items-center gap-3.5 min-w-0">
+        {{-- The title keeps a readable width; when the actions do not fit beside it they wrap onto their own line. --}}
+        <div class="px-4 sm:px-8 pt-5 pb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+            <div class="flex items-center gap-3.5 min-w-0 flex-1 basis-full sm:basis-[26rem]">
                 <div class="w-11 h-11 rounded-xl bg-emerald-600 flex items-center justify-center flex-shrink-0">
                     <i class="fa-solid {{ $icon }} text-white" aria-hidden="true"></i>
                 </div>
@@ -31,7 +32,7 @@
                     @endif
                 </div>
             </div>
-            <div class="flex items-center gap-2 shrink-0 self-start sm:self-auto flex-wrap">
+            <div class="flex items-center gap-2 max-w-full flex-wrap">
                 @if ($statsKey && isset($stats))
                     <button type="button" @click="statsOpen = !statsOpen" class="{{ \App\Support\Ui::BTN_NEUTRAL }}" :aria-expanded="statsOpen">
                         <i class="fa-solid fa-chart-simple text-xs"></i><span x-text="statsOpen ? 'Hide figures' : 'Show figures'"></span>
