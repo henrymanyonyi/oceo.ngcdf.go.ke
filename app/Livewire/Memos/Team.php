@@ -30,6 +30,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\On;
 use Livewire\Component;
 
 /**
@@ -52,6 +53,9 @@ class Team extends Component
     use RunsActions;
 
     public Activity $activity;
+
+    /** Steps 4 and 5 of the one-page memo builder (Memos\Compose), without the page shell. */
+    public bool $embedded = false;
 
     public bool $showAdd = false;
 
@@ -115,11 +119,22 @@ class Team extends Component
 
     public string $staffOfficeId = '';
 
-    public function mount(Activity $activity, AccessLogger $log): void
+    public function mount(Activity $activity, AccessLogger $log, bool $embedded = false): void
     {
+        $this->embedded = $embedded;
         abort_unless($activity->isVisibleTo(Auth::user()), 403);
         $this->activity = $activity;
-        $log->log(AccessLogger::VIEW, $activity, ['page' => 'team']);
+        if (! $this->embedded) {
+            $log->log(AccessLogger::VIEW, $activity, ['page' => 'team']);
+        }
+    }
+
+    /** The memo's dates, venue or details changed elsewhere on the builder page: DSA and the notices may have changed. */
+    #[On('memo-changed')]
+    #[On('memo-saved')]
+    public function memoChanged(): void
+    {
+        $this->activity->refresh();
     }
 
     private function done(string $message, array $warnings = []): void
@@ -134,6 +149,7 @@ class Team extends Component
         $this->activity->refresh();
         $this->toast($message);
         $this->warn($warnings);
+        $this->dispatch('team-changed');
     }
 
     // ── Team ───────────────────────────────────────────────────────────
@@ -398,7 +414,7 @@ class Team extends Component
 
         return view('livewire.memos.team', [
             'a' => $activity,
-            'editable' => $activity->status->isWithDepartment(),
+            'editable' => $activity->status->isWithDepartment() && ! $activity->isWithPreparer(),
             'overlapping' => $overlapping,
             'candidates' => $candidates,
             'unavailable' => $unavailable,

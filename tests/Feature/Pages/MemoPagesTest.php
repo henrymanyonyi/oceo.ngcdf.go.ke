@@ -55,11 +55,9 @@ it('shows a Head of Department only their own department\'s memos and files', fu
 it('creates a memo through the form for the Head of Department\'s own department only', function () {
     Livewire::actingAs($this->hod)->test(Form::class)
         ->assertSet('organising_department_id', (string) $this->ict->id)
-        ->set('title', 'ICT Department Quarterly Systems Review and Staff Training')
-        ->set('purpose', 'Review departmental systems and train staff.')
-        ->set('target_audience', 'ICT staff and invited departmental representatives')
+        ->set('activity_category_id', memoAbout()['activity_category_id'])
+        ->fill(memoAbout())
         ->set('requested_budget', '250000')
-        ->set('activity_category_id', (string) ActivityCategory::query()->value('id'))
         ->set('organising_department_id', (string) $this->other->id)
         ->set('start_date', today()->addDays(20)->toDateString())
         ->set('venue', 'NGCDF Board headquarters')

@@ -6,6 +6,7 @@ use App\Enums\ActivityStatus;
 use App\Enums\ParticipantRole;
 use App\Exceptions\ActivityWorkflowException;
 use App\Http\Controllers\PrivacyStatementController;
+use App\Livewire\Activities\Form;
 use App\Livewire\Concerns\EntersCostLines;
 use App\Models\Activity;
 use App\Models\ActivityCategory;
@@ -39,7 +40,7 @@ use Livewire\WithFileUploads;
  * submission to the Head. The token is re-checked on every request, and the
  * officer must have agreed to the Data Privacy Statement.
  */
-#[Layout('layouts.public')]
+#[Layout('layouts.public', ['wide' => true])]
 #[Title('Prepare an activity memo')]
 class MemoRequest extends Component
 {
@@ -110,6 +111,9 @@ class MemoRequest extends Component
 
     public bool $confirmSubmit = false;
 
+    /** Step 1, "About the activity", is complete (every field, as on the Head's own memo), so step 2 is open. */
+    public bool $aboutDone = false;
+
     /** @var list<string> */
     public array $warnings = [];
 
@@ -129,6 +133,7 @@ class MemoRequest extends Component
 
         if ($link && $memos->isVerified($link)) {
             $this->fill($this->detailsOf($link->memo));
+            $this->aboutDone = $link->memo !== null && Form::aboutComplete($link->memo);
         }
     }
 
@@ -169,7 +174,9 @@ class MemoRequest extends Component
 
         if ($this->act(fn () => $memos->verify($this->link(), $this->code), field: 'code')) {
             $this->code = '';
-            $this->fill($this->detailsOf($this->link()->memo));
+            $memo = $this->link()->memo;
+            $this->fill($this->detailsOf($memo));
+            $this->aboutDone = $memo !== null && Form::aboutComplete($memo);
         }
     }
 
@@ -233,29 +240,87 @@ class MemoRequest extends Component
         $this->act(fn () => app(DelegatedMemos::class)->saveDates($link, $this->start_date, (int) $this->dayCount()), 'Dates saved. Allowances (DSA) and the total have been recalculated.', 'end_date');
     }
 
+    /**
+     * Step 1: every field about the activity is required, as on the Head of Department's own memo (4 November 2026).
+     *
+     * @return array<string, list<mixed>>
+     */
+    private function aboutRules(): array
+    {
+        $filled = ['regex:/\S/'];
+        $hasTypes = $this->activity_category_id !== '' && ActivityType::query()->active()->where('activity_category_id', $this->activity_category_id)->exists();
+
+        return [
+            'title' => ['required', 'string', 'max:255', ...$filled],
+            'activity_category_id' => ['required', 'exists:activity_categories,id'],
+            'category_other' => $this->categoryRequiresDetail() ? ['required', 'string', 'max:150', ...$filled] : ['nullable', 'string', 'max:150'],
+            'activity_type_id' => [$hasTypes ? 'required' : 'nullable', Rule::exists('activity_types', 'id')->where('activity_category_id', $this->activity_category_id ?: 0)],
+            'purpose' => ['required', 'string', 'max:5000', ...$filled],
+            'justification' => ['required', 'string', 'max:5000', ...$filled],
+            'expected_outputs' => ['required', 'string', 'max:5000', ...$filled],
+            'risks' => ['required', 'string', 'max:5000', ...$filled],
+            'target_audience' => ['required', 'string', 'max:255', ...$filled],
+            'notes' => ['required', 'string', 'max:5000', ...$filled],
+        ];
+    }
+
+    /** @return array<string, string> */
+    private function aboutAttributes(): array
+    {
+        return ['purpose' => 'purpose', 'justification' => 'introduction and justification', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'activity_type_id' => 'activity type', 'expected_outputs' => 'expected outcomes and deliverables', 'risks' => 'key risks', 'target_audience' => 'participants and stakeholders', 'notes' => 'notes'];
+    }
+
+    /** Step 1 is checked on its own; when complete, step 2 opens and the page moves to it. */
+    public function continueToDates(): void
+    {
+        $this->validate($this->aboutRules(), [], $this->aboutAttributes());
+        $this->aboutDone = true;
+        $this->dispatch('builder-go', id: 'step-dates');
+    }
+
     public function save(DelegatedMemos $memos): void
     {
         $data = $this->validate([
-            'title' => ['required', 'string', 'max:255'],
-            'purpose' => ['required', 'string', 'max:5000'],
-            'expected_outputs' => ['nullable', 'string', 'max:5000'],
-            'justification' => ['required', 'string', 'max:5000'],
-            'risks' => ['nullable', 'string', 'max:5000'],
-            'target_audience' => ['nullable', 'string', 'max:255'],
-            'notes' => ['nullable', 'string', 'max:5000'],
-            'activity_category_id' => ['required', 'exists:activity_categories,id'],
-            'category_other' => $this->categoryRequiresDetail() ? ['required', 'string', 'max:150', 'regex:/\S/'] : ['nullable', 'string', 'max:150'],
-            'activity_type_id' => ['nullable', 'exists:activity_types,id'],
+            ...$this->aboutRules(),
             ...$this->dateRules(),
             'requested_budget' => ['nullable', 'numeric', 'min:0', 'max:9999999999999', 'regex:/^\d+(\.\d{1,2})?$/'],
             'county_id' => ['nullable', 'exists:counties,id'],
             'constituency_id' => ['nullable', 'exists:constituencies,id'],
             'venue' => ['required', 'string', 'max:255'],
-        ], [], ['purpose' => 'purpose', 'justification' => 'introduction and justification', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'end_date' => 'expected completion date', 'target_audience' => 'participants and stakeholders', 'requested_budget' => 'estimated budget']);
+        ], [], [...$this->aboutAttributes(), 'end_date' => 'expected completion date', 'requested_budget' => 'estimated budget']);
         $data['days'] = $this->dayCount();
         $data['category_other'] = $this->categoryRequiresDetail() ? trim((string) $data['category_other']) : null;
+        $first = ! $this->link()->activity_id;
 
-        $this->act(fn () => $memos->saveDetails($this->link(), $data), 'Saved. Add the team and costs below, then preview the memo.');
+        if ($this->act(fn () => $memos->saveDetails($this->link(), $data), $first ? 'Draft saved. Next: the team and costs below.' : 'Saved.') && $first) {
+            $this->dispatch('builder-go', id: 'step-team');
+        }
+    }
+
+    public function updatedActivityCategoryId(): void
+    {
+        $this->activity_type_id = '';
+        if (! $this->categoryRequiresDetail()) {
+            $this->category_other = '';
+        }
+    }
+
+    /**
+     * The steps for the rail, in order.
+     *
+     * @return list<array{id: string, number: int, title: string, done: bool, locked: bool}>
+     */
+    private function steps(?Activity $memo, array $issues): array
+    {
+        $saved = (bool) $memo;
+
+        return [
+            ['id' => 'step-details', 'number' => 1, 'title' => 'About the activity', 'done' => $this->aboutDone, 'locked' => false],
+            ['id' => 'step-dates', 'number' => 2, 'title' => 'Dates, venue and budget', 'done' => $saved, 'locked' => ! $this->aboutDone],
+            ['id' => 'step-team', 'number' => 3, 'title' => 'Team', 'done' => $saved && $memo->participants->isNotEmpty(), 'locked' => ! $saved],
+            ['id' => 'step-costs', 'number' => 4, 'title' => 'Costs', 'done' => $saved && $memo->costs->isNotEmpty(), 'locked' => ! $saved],
+            ['id' => 'step-review', 'number' => 5, 'title' => 'Check and submit', 'done' => $saved && collect($issues)->where('blocking', true)->isEmpty(), 'locked' => ! $saved],
+        ];
     }
 
     public function addOfficers(DelegatedMemos $memos): void
@@ -365,14 +430,18 @@ class MemoRequest extends Component
         $editable = $verified && (! $memo || $memo->isWithPreparer());
         $search = trim($this->staffSearch);
 
+        $issues = $memo && $editable ? array_values(array_filter($document->issues($memo), fn (array $i) => ! $i['for_head'])) : [];
+
         return view('livewire.memo-request', [
+            'steps' => $this->steps($memo, $issues),
+            'fullAbout' => true,
             'link' => $link?->loadMissing(['department', 'creator']),
             'usable' => $link?->isUsable() ?? false,
             'verified' => $verified,
             'memo' => $memo,
             'editable' => $editable,
             'returned' => $memo?->status === ActivityStatus::ReturnedToPreparer,
-            'issues' => $memo && $editable ? array_values(array_filter($document->issues($memo), fn (array $i) => ! $i['for_head'])) : [],
+            'issues' => $issues,
             'categories' => ActivityCategory::query()->active()->ordered()->get(['id', 'name', 'requires_detail']),
             'needsCategoryDetail' => $this->categoryRequiresDetail(),
             'types' => $this->activity_category_id ? ActivityType::query()->active()->where('activity_category_id', $this->activity_category_id)->orderBy('name')->get(['id', 'name']) : collect(),

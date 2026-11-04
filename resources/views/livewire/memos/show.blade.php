@@ -26,8 +26,9 @@
             @if ($canDiscard)
                 <button type="button" wire:click="$set('showDiscard', true)" class="{{ Ui::BTN_NEUTRAL }} hover:!text-red-600"><i class="fa-solid fa-trash text-xs"></i>Discard draft</button>
             @endif
-            <a href="{{ route('memos.edit', $a) }}" wire:navigate class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-pen text-xs"></i>Edit memo</a>
-            <a href="{{ route('memos.team', $a) }}" wire:navigate class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-users text-xs"></i>Team and costs</a>
+            @unless ($a->isWithPreparer())
+                <a href="{{ route('memos.edit', $a) }}" wire:navigate class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-pen-to-square text-xs"></i>Continue editing</a>
+            @endunless
             @if ($withHod)
                 <button type="button" wire:click="openHodAction('showDecline')" class="{{ Ui::BTN_NEUTRAL }} hover:!text-red-600"><i class="fa-solid fa-circle-xmark text-xs"></i>Decline</button>
                 <button type="button" wire:click="openHodAction('showReturnToOfficer')" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-reply text-xs"></i>Return to the officer</button>
@@ -128,7 +129,7 @@
                 <div><p class="{{ Ui::MICRO }}">External</p><p class="text-lg font-bold text-slate-800 font-numeric">{{ $a->external_count }}</p></div>
                 <div><p class="{{ Ui::MICRO }}">Planned cost</p><p class="text-lg font-bold text-slate-800 font-numeric"><span class="text-[10px] text-slate-400 mr-0.5">KES</span>{{ Money::format(Money::toCents($a->estimated_total)) }}</p></div>
             </div>
-            @unless ($readOnly)<a href="{{ route('memos.team', $a) }}" wire:navigate class="{{ $editable ? Ui::BTN_PRIMARY : Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-users text-xs"></i>{{ $editable ? 'Build the team and costs' : 'View the team and costs' }}</a>@endunless
+            @unless ($readOnly)<a href="{{ $editable ? route('memos.edit', $a).'#step-team' : route('memos.team', $a) }}" @unless ($editable) wire:navigate @endunless class="{{ $editable ? Ui::BTN_PRIMARY : Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-users text-xs"></i>{{ $editable ? 'Build the team and costs' : 'View the team and costs' }}</a>@endunless
         </div>
         @if ($budget)
             <x-memo.budget-position :position="$budget" class="mt-5 pt-5 border-t border-slate-100" />
@@ -188,25 +189,7 @@
         </x-ui.card>
     </div>
 
-    <x-ui.modal show="showSubmit" :open="$showSubmit" size="medium" icon="fa-paper-plane" :title="$submitLabel.'?'" :subtitle="$a->reference.' · '.$a->title">
-        <x-memo.route-choice :current="$route" :offices="$offices" :locked="$returned" :reviewOffice="$a->review_office" />
-        <x-memo.signing-capacity :designation="$designation" />
-        @if ($blocking->isNotEmpty())
-            <div class="rounded-lg border border-red-200 bg-red-50 p-3 text-[13px] text-red-800" role="alert">
-                <p class="font-semibold mb-1">Complete these first:</p>
-                <ul class="list-disc pl-5 space-y-0.5">@foreach ($blocking as $issue)<li>{{ $issue['message'] }}</li>@endforeach</ul>
-            </div>
-        @else
-            <p class="text-[13px] text-slate-600"><a href="{{ route('memos.document', $a) }}" target="_blank" rel="noopener" class="font-semibold text-emerald-700 hover:underline">Preview the memo and annexes</a> once more before you send it.</p>
-        @endif
-        <x-ui.field :label="$returned ? 'What you changed (optional)' : ($route === 'direct' ? 'Note to the CEO (optional)' : 'Note to the reviewer (optional)')" for="s-note" error="note">
-            <textarea id="s-note" wire:model="note" rows="3" class="{{ Ui::CONTROL }}" maxlength="2000"></textarea>
-        </x-ui.field>
-        <x-slot:footer>
-            <button type="button" wire:click="$set('showSubmit', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
-            <button type="button" wire:click="submit" wire:loading.attr="disabled" wire:target="submit" class="{{ Ui::BTN_PRIMARY }}" @disabled($blocking->isNotEmpty())><i class="fa-solid fa-paper-plane text-xs"></i><span wire:loading.remove wire:target="submit">{{ $returned ? $submitLabel : ($route === 'direct' ? 'Submit to the CEO' : 'Submit for review') }}</span><span wire:loading wire:target="submit">Sending…</span></button>
-        </x-slot:footer>
-    </x-ui.modal>
+    @include('livewire.memos.partials.submit-modal')
 
     <x-ui.modal show="showLocation" :open="$showLocation" size="slim" icon="fa-location-dot" title="Add a location" subtitle="Choose the county so allowances (DSA) can be calculated, and the venue.">
         <x-ui.field label="Region" for="l-r" error="locRegion"><select id="l-r" wire:model="locRegion" class="{{ Ui::CONTROL }} appearance-none pr-8"><option value="">Any</option>@foreach ($regions as $r)<option value="{{ $r->id }}">{{ $r->name }}</option>@endforeach</select></x-ui.field>
