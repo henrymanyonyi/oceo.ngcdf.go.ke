@@ -14,13 +14,13 @@
 </head>
 <body class="min-h-full font-sans antialiased text-slate-900">
     <header class="bg-emerald-900 text-white">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-3">
+        <div class="{{ ($wide ?? false) ? 'max-w-6xl' : 'max-w-4xl' }} mx-auto px-4 sm:px-6 h-16 flex items-center gap-3">
             <div class="bg-white p-1 rounded-lg w-10 h-10 flex items-center justify-center"><img src="{{ asset('images/ngcdf-logo.png') }}" alt="NG-CDF" class="h-8 w-auto"></div>
             <div><p class="font-bold text-sm uppercase tracking-tight">NG-CDF Board</p><p class="text-[11px] text-emerald-300">Office of the CEO · activity submission</p></div>
         </div>
     </header>
     @include('layouts.partials.toast')
-    <main class="max-w-4xl mx-auto px-4 sm:px-6 py-8">{{ $slot }}</main>
+    <main class="{{ ($wide ?? false) ? 'max-w-6xl' : 'max-w-4xl' }} mx-auto px-4 sm:px-6 py-8">{{ $slot }}</main>
     @livewireScripts
 </body>
 </html>
