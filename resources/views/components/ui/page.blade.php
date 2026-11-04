@@ -57,9 +57,10 @@
     </div>
 
     @if ($scroll === 'inner')
-        <div class="flex-1 min-h-0 px-8 py-6 flex flex-col gap-4 overflow-hidden">{{ $slot }}</div>
+        <div class="relative flex-1 min-h-0 px-8 py-6 flex flex-col gap-4 overflow-hidden">{{ $slot }}</div>
     @else
-        <div class="flex-1 min-h-0 overflow-y-auto">
+        {{-- relative: hidden labels (sr-only, position absolute) stay inside the scroller instead of stretching the window. --}}
+        <div class="relative flex-1 min-h-0 overflow-y-auto">
             <div class="px-8 py-6 flex flex-col gap-4">{{ $slot }}</div>
         </div>
     @endif
