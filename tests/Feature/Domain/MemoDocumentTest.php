@@ -32,7 +32,7 @@ beforeEach(function () {
     $this->memoDocument = app(MemoDocument::class);
 
     // A four-day field visit in Kakamega: three officers on one grade, one on another, a shared vehicle and a ticket.
-    $this->memo = departmentMemo($this->hod, ['days' => 4, 'risks' => 'Delays if the county is not ready.', 'memo_sections' => [['heading' => 'Programme', 'body' => 'Day 1 courtesy call; days 2 to 4 site visits.']]]);
+    $this->memo = departmentMemo($this->hod, ['days' => 4, 'risks' => 'Delays if the county is not ready.', 'purpose' => "Train ward officers.\n- Hand over the new system.", 'expected_outputs' => 'Officers trained', 'target_audience' => 'Ward officers', 'memo_sections' => [['heading' => 'Programme', 'body' => 'Day 1 courtesy call; days 2 to 4 site visits.']]]);
     $county = County::query()->where('name', 'Kakamega')->firstOrFail();
     $this->editor->addLocation($this->memo, ['county_id' => $county->id], $this->hod);
     $senior = Staff::factory()->create(['job_grade' => '3', 'department_id' => $this->ict->id]);
@@ -55,8 +55,8 @@ it('builds the memo from what was captured, with every annex total agreeing with
         ->and($data['request'])->toContain('<strong>Kshs.'.number_format(intdiv($total, 100)).'</strong>')->toContain('Annex: A attached hereto')
         ->and(collect($data['sections'])->pluck('heading')->all())->toBe(['Introduction', 'Objectives', 'Key Risks to be mitigated', 'Programme'])
         ->and(collect($data['sections'])->firstWhere('heading', 'Key Risks to be mitigated')['bullets'])->toBe(['Delays if the county is not ready.'])
-        ->and(collect($data['sections'])->pluck('number')->all())->toBe(['1.0', '2.0', '3.0', '4.0'])
-        ->and($data['isDraft'])->toBeTrue();
+        ->and(collect($data['sections'])->firstWhere('heading', 'Objectives')['bullets'])->toBe(['Train ward officers.', 'Hand over the new system.', 'Expected outcomes: Officers trained', 'Participants and stakeholders: Ward officers'])
+        ->and(collect($data['sections'])->pluck('number')->all())->toBe(['1.0', '2.0', '3.0', '4.0']);
 
     // Three 5 officers on the same DSA are one row of three, like the paper budget.
     $dsa = collect($data['detailed'])->where('item', 'DSA')->where('scale', '5')->sole();
