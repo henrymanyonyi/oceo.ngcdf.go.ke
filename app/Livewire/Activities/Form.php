@@ -50,7 +50,7 @@ class Form extends Component
     public bool $embedded = false;
 
     /** Step 1 of the builder, "About the activity" (4 November 2026): for a Head of Department's memo every field is required. */
-    public const ABOUT_FIELDS = ['title', 'activity_category_id', 'category_other', 'activity_type_id', 'purpose', 'justification', 'expected_outputs', 'risks', 'target_audience', 'notes'];
+    public const ABOUT_FIELDS = ['title', 'activity_category_id', 'category_other', 'activity_type_id', 'purpose', 'justification', 'expected_outputs', 'risks', 'target_audience', 'notes', 'approval_request'];
 
     /** Step 1 is complete, so step 2 (reference, dates and budget) is open. */
     public bool $aboutDone = false;
@@ -71,6 +71,9 @@ class Form extends Component
     public array $memo_sections = [];
 
     public string $target_audience = '';
+
+    /** The memo's "Request for approval" as typed; empty keeps the standard wording (MemoDocument). */
+    public string $approval_request = '';
 
     public string $requested_budget = '';
 
@@ -129,7 +132,7 @@ class Form extends Component
             $this->activity = $activity;
             $this->loadedVersion = (string) $activity->updated_at?->toIso8601String();
             // Optional columns are NULL in the database but strings here, so cast before filling.
-            foreach (['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'target_audience', 'requested_budget', 'notes', 'source_reference', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id', 'budget_line_id', 'responsible_hod_id', 'responsible_hod_name'] as $key) {
+            foreach (['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'target_audience', 'requested_budget', 'notes', 'approval_request', 'source_reference', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id', 'budget_line_id', 'responsible_hod_id', 'responsible_hod_name'] as $key) {
                 $this->{$key} = (string) ($activity->{$key} ?? '');
             }
             $this->memo_sections = collect((array) $activity->memo_sections)->map(fn ($s) => ['heading' => (string) ($s['heading'] ?? ''), 'body' => (string) ($s['body'] ?? '')])->values()->all();
@@ -161,7 +164,7 @@ class Form extends Component
     /** Whether every step 1 field of a memo is filled in (the type only when its category has types). */
     public static function aboutComplete(Activity $activity): bool
     {
-        foreach (['title', 'purpose', 'justification', 'expected_outputs', 'risks', 'target_audience', 'notes'] as $field) {
+        foreach (['title', 'purpose', 'justification', 'expected_outputs', 'risks', 'approval_request'] as $field) {
             if (trim((string) $activity->{$field}) === '') {
                 return false;
             }
@@ -298,11 +301,13 @@ class Form extends Component
             'memo_sections' => ['array', 'max:10'],
             'memo_sections.*.heading' => ['required', 'string', 'max:150'],
             'memo_sections.*.body' => ['required', 'string', 'max:5000'],
-            'target_audience' => [$full ? 'required' : 'nullable', 'string', 'max:255', ...$filled],
+            'target_audience' => ['nullable', 'string', 'max:255'],
             'requested_budget' => ['nullable', 'numeric', 'min:0', 'max:9999999999999', 'regex:/^\d+(\.\d{1,2})?$/'],
             'responsible_hod_id' => ['nullable', 'exists:users,id'],
             'responsible_hod_name' => ['nullable', 'string', 'max:255'],
-            'notes' => [$full ? 'required' : 'nullable', 'string', 'max:5000', ...$filled],
+            'notes' => ['nullable', 'string', 'max:5000'],
+            // Required on every memo, the Office of the CEO's included (memos prepared on a Head's behalf), 5 November 2026.
+            'approval_request' => ['required', 'string', 'max:5000', 'regex:/\S/'],
             'activity_category_id' => ['required', 'exists:activity_categories,id'],
             'category_other' => $this->categoryRequiresDetail() ? ['required', 'string', 'max:150', 'regex:/\S/'] : ['nullable', 'string', 'max:150'],
             'activity_type_id' => [$full && $this->categoryHasTypes() ? 'required' : 'nullable', Rule::exists('activity_types', 'id')->where('activity_category_id', $this->activity_category_id ?: 0)],
@@ -333,7 +338,7 @@ class Form extends Component
     /** @return array<string, string> */
     protected function validationAttributes(): array
     {
-        return ['purpose' => 'purpose', 'source_reference' => 'memo reference', 'issued_on' => 'date issued', 'organising_department_id' => 'requesting department', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'end_date' => 'expected completion date', 'start_date' => 'planned start date', 'memo' => 'source document', 'justification' => 'introduction and justification', 'risks' => 'key risks', 'memo_sections.*.heading' => 'section heading', 'memo_sections.*.body' => 'section text', 'requested_budget' => 'estimated budget', 'target_audience' => 'participants and stakeholders', 'expected_outputs' => 'expected outcomes and deliverables', 'activity_type_id' => 'activity type', 'notes' => 'notes', 'responsible_hod_id' => 'Head of Department', 'responsible_hod_name' => 'Head of Department'];
+        return ['purpose' => 'purpose', 'source_reference' => 'memo reference', 'issued_on' => 'date issued', 'organising_department_id' => 'requesting department', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'end_date' => 'expected completion date', 'start_date' => 'planned start date', 'memo' => 'source document', 'justification' => 'introduction and justification', 'risks' => 'key risks', 'memo_sections.*.heading' => 'section heading', 'memo_sections.*.body' => 'section text', 'requested_budget' => 'estimated budget', 'target_audience' => 'participants and stakeholders', 'expected_outputs' => 'expected outcomes and deliverables', 'activity_type_id' => 'activity type', 'notes' => 'notes', 'approval_request' => 'request for approval', 'responsible_hod_id' => 'Head of Department', 'responsible_hod_name' => 'Head of Department'];
     }
 
     public function save(ActivityEditor $editor, DocumentStore $documents): void
@@ -355,7 +360,7 @@ class Form extends Component
 
         $data['days'] = $this->dayCount();
         $data['category_other'] = $this->categoryRequiresDetail() ? trim((string) $data['category_other']) : null;
-        $fields = ['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'memo_sections', 'target_audience', 'requested_budget', 'notes', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id',
+        $fields = ['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'memo_sections', 'target_audience', 'requested_budget', 'notes', 'approval_request', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id',
             'budget_line_id', 'source_reference', 'start_date', 'days', 'count_externals_in_per_head'];
         $fields = $this->isOffice()
             ? [...$fields, 'source_received_on', 'responsible_hod_id', 'responsible_hod_name']

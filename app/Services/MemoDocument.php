@@ -62,6 +62,11 @@ class MemoDocument
             }
         }
 
+        // The request for approval is the department's to write (5 November 2026); older drafts must add it before submitting.
+        if ($activity->isDepartmentOriginated() && blank(trim((string) $activity->approval_request))) {
+            $add('Write the request for approval (the closing section of the memo).', true);
+        }
+
         if (blank($activity->justification)) {
             $add('Write the introduction and justification (section 1.0 of the memo).', true);
         }
@@ -148,7 +153,6 @@ class MemoDocument
 
         return [
             'activity' => $activity,
-            'isDraft' => $submittedAt === null && ! $activity->status->isApprovedOrLater(),
             'to' => 'Chief Executive Officer',
             'from' => $this->from($activity),
             // A Head's memo prints the date it is issued; an older memo, the date it was submitted, as before.
@@ -158,6 +162,8 @@ class MemoDocument
             'nightsBasis' => $this->settings->get('dsa_basis') !== DsaPeriod::BASIS_DAYS,
             'sections' => $this->sections($activity),
             'request' => $this->requestParagraph($activity, $total),
+            // The request as the department typed it, one paragraph per blank-line break; empty keeps the standard wording.
+            'requestTyped' => array_values(array_filter(array_map('trim', preg_split('/\R\s*\R/', (string) $activity->approval_request)))),
             'signatures' => $this->signatures($activity, $submittedAt),
             'total' => $total,
             'byCategory' => $this->byCategory($lines, $total),
@@ -219,17 +225,17 @@ class MemoDocument
     {
         $sections = [
             ['heading' => 'Introduction', 'paragraphs' => [(string) $activity->justification]],
-            ['heading' => 'Objectives', 'paragraphs' => array_values(array_filter([
-                (string) $activity->purpose,
-                filled($activity->expected_outputs) ? 'Expected outcomes: '.$activity->expected_outputs : null,
-                filled($activity->target_audience) ? 'Participants and stakeholders: '.$activity->target_audience : null,
+            // Each line of the purpose is a bullet, followed by the expected outcomes and the participants (5 November 2026).
+            ['heading' => 'Objectives', 'paragraphs' => [], 'bullets' => array_values(array_filter([
+                ...$this->lines($activity->purpose),
+                filled($activity->expected_outputs) ? 'Expected outcomes: '.trim((string) $activity->expected_outputs) : null,
+                filled($activity->target_audience) ? 'Participants and stakeholders: '.trim((string) $activity->target_audience) : null,
             ]))],
         ];
 
         if (filled($activity->risks)) {
             // Each line of the risks is a bullet, as in the template.
-            $risks = array_values(array_filter(array_map(fn (string $l) => trim(ltrim(trim($l), "-•*\t ")), preg_split('/\R/', (string) $activity->risks))));
-            $sections[] = ['heading' => 'Key Risks to be mitigated', 'paragraphs' => [], 'bullets' => $risks];
+            $sections[] = ['heading' => 'Key Risks to be mitigated', 'paragraphs' => [], 'bullets' => $this->lines($activity->risks)];
         }
 
         foreach ((array) $activity->memo_sections as $extra) {
@@ -239,6 +245,16 @@ class MemoDocument
         }
 
         return collect($sections)->values()->map(fn (array $s, int $i) => $s + ['number' => ($i + 1).'.0', 'bullets' => []])->all();
+    }
+
+    /**
+     * The non-empty lines of a text, without any bullet marks typed in front of them.
+     *
+     * @return list<string>
+     */
+    private function lines(?string $text): array
+    {
+        return array_values(array_filter(array_map(fn (string $l) => trim(ltrim(trim($l), "-•*\t ")), preg_split('/\R/', (string) $text))));
     }
 
     private function requestParagraph(Activity $activity, int $total): string

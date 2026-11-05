@@ -36,6 +36,7 @@ it('records an activity through the form, with the first location and memo', fun
     Livewire::actingAs($cos)->test(Form::class)
         ->set('title', 'Monitoring visit, Nakuru')
         ->set('purpose', 'Verify project status')
+        ->set('approval_request', 'This is to seek your authority for the activity.')
         ->set('activity_category_id', (string) ActivityCategory::query()->value('id'))
         ->set('organising_department_id', (string) Department::query()->value('id'))
         ->set('start_date', today()->addDays(20)->toDateString())

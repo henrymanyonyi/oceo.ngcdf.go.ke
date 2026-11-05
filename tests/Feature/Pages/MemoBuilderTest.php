@@ -22,25 +22,26 @@ it('opens the memo builder with every step on one page, the later ones waiting f
     $this->actingAs($this->hod)->get(route('memos.create'))->assertOk()
         ->assertSeeInOrder(['About the activity', 'Reference, dates and budget', 'Venue and location', 'Team', 'Costs', 'Review and submit'])
         ->assertSee('Continue to step 2')
-        ->assertSee('Opens when every field in step 1 is filled in.')
+        ->assertSee('Opens when the required fields in step 1 are filled in.')
         ->assertDontSee('Save draft and continue')
         ->assertSee('Opens when you save the draft in step 2.');
 });
 
-it('opens step 2 only when every field about the activity is filled in', function () {
+it('opens step 2 only when the required fields about the activity are filled in, participants and notes being optional', function () {
     $about = memoAbout();
 
     $form = Livewire::actingAs($this->hod)->test(Form::class, ['embedded' => true])
         ->set('activity_category_id', $about['activity_category_id'])
         ->call('continueToDates')
-        ->assertHasErrors(['title', 'activity_type_id', 'purpose', 'justification', 'expected_outputs', 'risks', 'target_audience', 'notes'])
+        ->assertHasErrors(['title', 'activity_type_id', 'purpose', 'justification', 'expected_outputs', 'risks', 'approval_request'])
+        ->assertHasNoErrors(['target_audience', 'notes'])
         ->assertSet('aboutDone', false)
         ->assertNotDispatched('about-done');
 
     // Spaces alone are not an answer.
-    $form->fill([...$about, 'notes' => '   '])->call('continueToDates')->assertHasErrors(['notes'])->assertSet('aboutDone', false);
+    $form->fill([...$about, 'approval_request' => '   ', 'target_audience' => '', 'notes' => ''])->call('continueToDates')->assertHasErrors(['approval_request'])->assertSet('aboutDone', false);
 
-    $form->set('notes', $about['notes'])->call('continueToDates')
+    $form->set('approval_request', $about['approval_request'])->call('continueToDates')
         ->assertHasNoErrors()
         ->assertSet('aboutDone', true)
         ->assertDispatched('about-done')
@@ -51,7 +52,7 @@ it('opens step 2 only when every field about the activity is filled in', functio
         ->set('aboutDone', true)
         ->fill(['title' => 'x', 'purpose' => 'y', 'activity_category_id' => $about['activity_category_id'], 'start_date' => today()->addDays(20)->toDateString(), 'source_reference' => 'REF/1'])
         ->call('save')
-        ->assertHasErrors(['justification', 'expected_outputs', 'risks', 'target_audience', 'notes', 'activity_type_id']);
+        ->assertHasErrors(['justification', 'expected_outputs', 'risks', 'approval_request', 'activity_type_id']);
     expect(Activity::query()->count())->toBe(0);
 });
 

@@ -118,6 +118,7 @@ function departmentMemo(User $hod, array $overrides = []): Activity
         'requested_budget' => '250000.00',
         'source_reference' => 'NG-CDF BOARD/ICT/001/2026',
         'issued_on' => today()->toDateString(),
+        'approval_request' => 'This is to seek your authority for the activity and its budget.',
     ], $overrides), $hod);
 
     $editor->addLocation($memo, ['venue' => 'NGCDF Board headquarters'], $hod);
@@ -159,5 +160,6 @@ function memoAbout(array $overrides = []): array
         'risks' => 'Systems downtime if the review is delayed.',
         'target_audience' => 'ICT staff and invited departmental representatives',
         'notes' => 'At the Board headquarters.',
+        'approval_request' => 'This is to seek your authority for the activity and its budget.',
     ], $overrides);
 }

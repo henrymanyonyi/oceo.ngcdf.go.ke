@@ -52,6 +52,7 @@ class Activity extends Model
         'responsible_hod_id',
         'responsible_hod_name',
         'notes',
+        'approval_request',
         'activity_category_id',
         'category_other',
         'activity_type_id',

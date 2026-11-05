@@ -32,7 +32,7 @@ beforeEach(function () {
     $this->memoDocument = app(MemoDocument::class);
 
     // A four-day field visit in Kakamega: three officers on one grade, one on another, a shared vehicle and a ticket.
-    $this->memo = departmentMemo($this->hod, ['days' => 4, 'risks' => 'Delays if the county is not ready.', 'memo_sections' => [['heading' => 'Programme', 'body' => 'Day 1 courtesy call; days 2 to 4 site visits.']]]);
+    $this->memo = departmentMemo($this->hod, ['days' => 4, 'risks' => 'Delays if the county is not ready.', 'purpose' => "Train ward officers.\n- Hand over the new system.", 'expected_outputs' => 'Officers trained', 'target_audience' => 'Ward officers', 'memo_sections' => [['heading' => 'Programme', 'body' => 'Day 1 courtesy call; days 2 to 4 site visits.']]]);
     $county = County::query()->where('name', 'Kakamega')->firstOrFail();
     $this->editor->addLocation($this->memo, ['county_id' => $county->id], $this->hod);
     $senior = Staff::factory()->create(['job_grade' => '3', 'department_id' => $this->ict->id]);
@@ -55,8 +55,8 @@ it('builds the memo from what was captured, with every annex total agreeing with
         ->and($data['request'])->toContain('<strong>Kshs.'.number_format(intdiv($total, 100)).'</strong>')->toContain('Annex: A attached hereto')
         ->and(collect($data['sections'])->pluck('heading')->all())->toBe(['Introduction', 'Objectives', 'Key Risks to be mitigated', 'Programme'])
         ->and(collect($data['sections'])->firstWhere('heading', 'Key Risks to be mitigated')['bullets'])->toBe(['Delays if the county is not ready.'])
-        ->and(collect($data['sections'])->pluck('number')->all())->toBe(['1.0', '2.0', '3.0', '4.0'])
-        ->and($data['isDraft'])->toBeTrue();
+        ->and(collect($data['sections'])->firstWhere('heading', 'Objectives')['bullets'])->toBe(['Train ward officers.', 'Hand over the new system.', 'Expected outcomes: Officers trained', 'Participants and stakeholders: Ward officers'])
+        ->and(collect($data['sections'])->pluck('number')->all())->toBe(['1.0', '2.0', '3.0', '4.0']);
 
     // Three 5 officers on the same DSA are one row of three, like the paper budget.
     $dsa = collect($data['detailed'])->where('item', 'DSA')->where('scale', '5')->sole();
@@ -73,6 +73,7 @@ it('lists what is missing without inventing it, and blocks submission only on wh
     expect($issues->where('blocking', true)->pluck('message')->all())->toBe([
         'Give the memo reference (REF NO).',
         'Give the date the memo is issued.',
+        'Write the request for approval (the closing section of the memo).',
         'Write the introduction and justification (section 1.0 of the memo).',
         'Add the venue or location.',
         'Add at least one officer to the team.',
@@ -167,6 +168,24 @@ it('lets the Head of Department add risks and extra sections, preview the memo, 
 
     expect($memo->fresh()->documents()->count())->toBe(0)
         ->and($memo->fresh()->status->value)->toBe('under_review');
+});
+
+it('uses the request for approval the Head typed, and the standard wording only on older memos without one', function () {
+    $this->memo->forceFill(['approval_request' => null])->saveQuietly();
+    $standard = view('memos.document', $this->memoDocument->data($this->memo) + ['user' => $this->hod])->render();
+    expect($standard)->toContain('Therefore, this is to seek your authority');
+
+    Livewire::actingAs($this->hod)->test(Form::class, ['activity' => $this->memo->fresh()])
+        ->fill(memoAbout(['approval_request' => "We ask for your approval of the visit.\n\nThe cost is within the vote."]))
+        ->set('source_reference', 'NG-CDF BOARD/ICT/003/2026')->set('issued_on', today()->toDateString())
+        ->call('save')->assertHasNoErrors();
+
+    $memo = $this->memo->fresh();
+    $html = view('memos.document', $this->memoDocument->data($memo) + ['user' => $this->hod])->render();
+
+    expect($memo->approval_request)->toBe("We ask for your approval of the visit.\n\nThe cost is within the vote.")
+        ->and($html)->toContain('<p>We ask for your approval of the visit.</p>')->toContain('<p>The cost is within the vote.</p>')
+        ->not->toContain('Therefore, this is to seek your authority');
 });
 
 it('charges the memo to the budget line chosen', function () {

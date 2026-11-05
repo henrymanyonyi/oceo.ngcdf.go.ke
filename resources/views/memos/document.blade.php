@@ -3,7 +3,7 @@
     Board's internal memo template (files/MEMO Template .docx): US Letter, the
     template's margins, black text, bold TO / FROM / DATE / REF NO / SUBJECT, numbered
     section headings, the request for approval, the four signature blocks, then
-    Annex: A (Activity Budget Request, with the signatures repeated) and the
+    Annex: A (Activity Budget Request; the signatures are not repeated there) and the
     Participants table. "Page n of N" is stamped by MemoDocument::pdf().
     The font is Gill Sans MT (App\Support\DocumentFont); the template itself uses Trebuchet MS.
 --}}
@@ -30,8 +30,8 @@
     <title>{{ $a->reference }} · Internal memo · RESTRICTED</title>
     <style>
         {!! DocumentFont::faces() !!}
-        /* The template's margins: top 0.39in, right 0.43in, bottom 1in, left 1in. */
-        @page { margin: 28pt 31pt 72pt 72pt; }
+        /* Even 1in side margins (5 November 2026): the template's 0.43in right margin left the page lopsided. */
+        @page { margin: 36pt 72pt 72pt 72pt; }
         body { font-family: {!! DocumentFont::STACK !!}; font-size: 11pt; color: #000; line-height: 1.3; }
         table.brand { width: 100%; border-collapse: collapse; border-bottom: 2pt solid #000; margin-bottom: 8pt; }
         table.brand td { vertical-align: middle; padding: 0 0 6pt; }
@@ -39,20 +39,19 @@
         table.brand img { height: 66pt; }
         table.brand td.org { text-align: center; font-size: 15pt; letter-spacing: .3pt; line-height: 1.6; }
         .kind { text-align: center; font-weight: bold; font-size: 15pt; text-decoration: underline; margin: 6pt 0 10pt; }
-        .draft { text-align: center; font-size: 9pt; margin: -6pt 0 8pt; }
-        table.head { width: 100%; border-collapse: collapse; border-bottom: 1.5pt solid #000; margin: 0 0 8pt 26pt; }
+        table.head { width: 100%; border-collapse: collapse; border-bottom: 1.5pt solid #000; margin: 0 0 10pt; }
         table.head td { padding: 0 0 9pt; vertical-align: top; font-weight: bold; font-size: 12pt; }
         table.head td.k { width: 78pt; }
-        table.head td.v { text-transform: uppercase; text-align: justify; }
+        table.head td.v { text-transform: uppercase; text-align: left; }
         h2 { font-size: 12pt; font-weight: bold; margin: 12pt 0 6pt; }
         p { margin: 0 0 8pt; text-align: justify; }
         ul.bullets { margin: 0 0 8pt 18pt; padding: 0; }
         ul.bullets li { margin: 0 0 3pt; text-align: justify; }
         .sign { margin-top: 14pt; page-break-inside: avoid; }
-        .sign .label { font-weight: bold; border-bottom: 1pt solid #000; padding-bottom: 2pt; margin-bottom: 12pt; }
+        .sign .label { font-weight: bold; margin-bottom: 8pt; }
         .sign table { width: 100%; border-collapse: collapse; }
         .sign td { padding: 0; vertical-align: bottom; }
-        .sign .des { font-weight: bold; text-decoration: underline; margin-top: 1pt; }
+        .sign .des { font-weight: bold; margin-top: 1pt; }
         .annex { page-break-before: always; }
         .annex .title { font-weight: bold; }
         .annex .heading { font-weight: bold; text-decoration: underline; margin-bottom: 4pt; }
@@ -65,7 +64,7 @@
         table.grid .mid { text-align: center; white-space: nowrap; }
         table.grid tr.total td { font-weight: bold; }
         table.people { width: 70%; }
-        table.duration { width: 80%; }
+        table.duration { width: 100%; } /* the same width as the budget table below it */
         .note { font-size: 9.5pt; }
     </style>
 </head>
@@ -78,7 +77,6 @@
         </tr>
     </table>
     <div class="kind">INTERNAL MEMO</div>
-    @if ($isDraft)<div class="draft">DRAFT: not yet submitted. Figures and team may still change.</div>@endif
 
     <table class="head">
         <tr><td class="k">TO:</td><td class="v">{{ $to }}</td></tr>
@@ -103,8 +101,12 @@
     @endforeach
 
     <h2>{{ count($sections) + 1 }}.0&nbsp;&nbsp;&nbsp;Request for approval</h2>
-    <p>{!! $request !!}</p>
-    <p>Therefore, this is to seek your authority for the above activity and the accompanying budget, to enable achievement of the intended activity.</p>
+    @forelse ($requestTyped as $text)
+        <p>{!! $para($text) !!}</p>
+    @empty
+        <p>{!! $request !!}</p>
+        <p>Therefore, this is to seek your authority for the above activity and the accompanying budget, to enable achievement of the intended activity.</p>
+    @endforelse
 
     @include('memos.partials.signatures', ['signatures' => $signatures])
 
@@ -141,8 +143,6 @@
             </tbody>
         </table>
         @if ($adjusted)<p class="note">"(adjusted)" marks an amount the Office of the CEO changed with a recorded reason.</p>@endif
-
-        @include('memos.partials.signatures', ['signatures' => $signatures])
     </div>
 
     {{-- ── Participants ──────────────────────────────────────────── --}}

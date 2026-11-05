@@ -147,6 +147,7 @@
                 <div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Purpose</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->purpose }}</dd></div>
                 <div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Justification</dt><dd class="text-sm whitespace-pre-line {{ $a->justification ? 'text-slate-700' : 'text-slate-400 italic' }}">{{ $a->justification ?: 'Not given' }}</dd></div>
                 <div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Expected outcomes and deliverables</dt><dd class="text-sm whitespace-pre-line {{ $a->expected_outputs ? 'text-slate-700' : 'text-slate-400 italic' }}">{{ $a->expected_outputs ?: 'Not given' }}</dd></div>
+                @if ($a->approval_request)<div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Request for approval</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->approval_request }}</dd></div>@endif
                 <div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Participants and stakeholders</dt><dd class="text-sm {{ $a->target_audience ? 'text-slate-700' : 'text-slate-400 italic' }}">{{ $a->target_audience ?: 'Not given' }}</dd></div>
                 <div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Venue and location</dt>
                     <dd class="text-sm text-slate-700">

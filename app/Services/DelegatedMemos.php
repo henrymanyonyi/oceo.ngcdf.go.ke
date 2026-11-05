@@ -58,7 +58,7 @@ class DelegatedMemos
 
     /** The memo fields an officer fills in, as on the memo form. */
     public const FIELDS = [
-        'title', 'purpose', 'expected_outputs', 'justification', 'risks', 'target_audience', 'notes',
+        'title', 'purpose', 'expected_outputs', 'justification', 'risks', 'target_audience', 'notes', 'approval_request',
         'activity_category_id', 'category_other', 'activity_type_id', 'start_date', 'days', 'requested_budget',
     ];
 
