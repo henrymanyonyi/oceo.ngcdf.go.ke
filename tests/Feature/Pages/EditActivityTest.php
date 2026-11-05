@@ -35,6 +35,7 @@ it('opens and saves the edit form for a draft with no notes, outputs or memo num
         ->assertSet('notes', '')
         ->set('title', 'Proposal review, Western Region (revised)')
         ->set('notes', 'Venue moved to Kakamega town')
+        ->set('approval_request', 'This is to seek your authority for the activity.')
         ->set('end_date', $activity->start_date->copy()->addDays(3)->toDateString())
         ->call('save')
         ->assertHasNoErrors()
@@ -74,6 +75,7 @@ it('lets an approved activity be corrected but not re-dated through the form', f
 
     Livewire::actingAs($cos)->test(Form::class, ['activity' => $activity])
         ->set('title', 'Corrected title')
+        ->set('approval_request', 'This is to seek your authority for the activity.')
         ->call('save')
         ->assertHasNoErrors();
 

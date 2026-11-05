@@ -73,6 +73,7 @@ it('lists what is missing without inventing it, and blocks submission only on wh
     expect($issues->where('blocking', true)->pluck('message')->all())->toBe([
         'Give the memo reference (REF NO).',
         'Give the date the memo is issued.',
+        'Write the request for approval (the closing section of the memo).',
         'Write the introduction and justification (section 1.0 of the memo).',
         'Add the venue or location.',
         'Add at least one officer to the team.',
@@ -167,6 +168,24 @@ it('lets the Head of Department add risks and extra sections, preview the memo, 
 
     expect($memo->fresh()->documents()->count())->toBe(0)
         ->and($memo->fresh()->status->value)->toBe('under_review');
+});
+
+it('uses the request for approval the Head typed, and the standard wording only on older memos without one', function () {
+    $this->memo->forceFill(['approval_request' => null])->saveQuietly();
+    $standard = view('memos.document', $this->memoDocument->data($this->memo) + ['user' => $this->hod])->render();
+    expect($standard)->toContain('Therefore, this is to seek your authority');
+
+    Livewire::actingAs($this->hod)->test(Form::class, ['activity' => $this->memo->fresh()])
+        ->fill(memoAbout(['approval_request' => "We ask for your approval of the visit.\n\nThe cost is within the vote."]))
+        ->set('source_reference', 'NG-CDF BOARD/ICT/003/2026')->set('issued_on', today()->toDateString())
+        ->call('save')->assertHasNoErrors();
+
+    $memo = $this->memo->fresh();
+    $html = view('memos.document', $this->memoDocument->data($memo) + ['user' => $this->hod])->render();
+
+    expect($memo->approval_request)->toBe("We ask for your approval of the visit.\n\nThe cost is within the vote.")
+        ->and($html)->toContain('<p>We ask for your approval of the visit.</p>')->toContain('<p>The cost is within the vote.</p>')
+        ->not->toContain('Therefore, this is to seek your authority');
 });
 
 it('charges the memo to the budget line chosen', function () {

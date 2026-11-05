@@ -67,6 +67,9 @@ class MemoRequest extends Component
 
     public string $target_audience = '';
 
+    /** The memo's "Request for approval" as typed; empty keeps the standard wording. */
+    public string $approval_request = '';
+
     public string $notes = '';
 
     public string $activity_category_id = '';
@@ -259,15 +262,16 @@ class MemoRequest extends Component
             'justification' => ['required', 'string', 'max:5000', ...$filled],
             'expected_outputs' => ['required', 'string', 'max:5000', ...$filled],
             'risks' => ['required', 'string', 'max:5000', ...$filled],
-            'target_audience' => ['required', 'string', 'max:255', ...$filled],
-            'notes' => ['required', 'string', 'max:5000', ...$filled],
+            'target_audience' => ['nullable', 'string', 'max:255'],
+            'notes' => ['nullable', 'string', 'max:5000'],
+            'approval_request' => ['required', 'string', 'max:5000', ...$filled],
         ];
     }
 
     /** @return array<string, string> */
     private function aboutAttributes(): array
     {
-        return ['purpose' => 'purpose', 'justification' => 'introduction and justification', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'activity_type_id' => 'activity type', 'expected_outputs' => 'expected outcomes and deliverables', 'risks' => 'key risks', 'target_audience' => 'participants and stakeholders', 'notes' => 'notes'];
+        return ['purpose' => 'purpose', 'justification' => 'introduction and justification', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'activity_type_id' => 'activity type', 'expected_outputs' => 'expected outcomes and deliverables', 'risks' => 'key risks', 'target_audience' => 'participants and stakeholders', 'notes' => 'notes', 'approval_request' => 'request for approval'];
     }
 
     /** Step 1 is checked on its own; when complete, step 2 opens and the page moves to it. */
@@ -410,6 +414,7 @@ class MemoRequest extends Component
             'risks' => (string) $memo->risks,
             'target_audience' => (string) $memo->target_audience,
             'notes' => (string) $memo->notes,
+            'approval_request' => (string) $memo->approval_request,
             'activity_category_id' => (string) $memo->activity_category_id,
             'category_other' => (string) $memo->category_other,
             'activity_type_id' => (string) $memo->activity_type_id,

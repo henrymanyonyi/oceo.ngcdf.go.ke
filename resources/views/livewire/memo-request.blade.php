@@ -63,13 +63,13 @@
                 </x-slot:rail>
 
                 <form wire:submit="save" class="flex flex-col gap-10">
-                    <x-memo.step id="step-details" number="1" title="About the activity" line="What the activity is and why it is needed. This is the body of the memo; every field is needed." :done="$aboutDone">
+                    <x-memo.step id="step-details" number="1" title="About the activity" line="What the activity is and why it is needed. This is the body of the memo; the fields marked * are needed." :done="$aboutDone">
                         <x-ui.card title="The activity" icon="fa-clipboard-list" padded>
                             @include('livewire.activities.partials.form-about')
                         </x-ui.card>
                         @unless ($aboutDone)
                             <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
-                                <p class="text-[12px] text-emerald-900"><i class="fa-solid fa-circle-info mr-1.5"></i>Fill in every field above to go on to step 2.</p>
+                                <p class="text-[12px] text-emerald-900"><i class="fa-solid fa-circle-info mr-1.5"></i>Fill in the fields marked * to go on to step 2.</p>
                                 <button type="button" wire:click="continueToDates" wire:loading.attr="disabled" wire:target="continueToDates" class="{{ Ui::BTN_PRIMARY }}">Continue to step 2<i class="fa-solid fa-arrow-down text-xs"></i></button>
                             </div>
                         @endunless
@@ -77,7 +77,7 @@
 
                     <x-memo.step id="step-dates" number="2" title="Dates, venue and budget" line="When and where the activity takes place, and your estimate of what it costs." :done="(bool) $memo" :locked="! $aboutDone">
                         @if (! $aboutDone)
-                            <x-memo.step-locked message="Opens when every field in step 1 is filled in." />
+                            <x-memo.step-locked message="Opens when the required fields in step 1 are filled in." />
                         @else
                             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
                                 <x-ui.card title="Dates" icon="fa-calendar" padded>

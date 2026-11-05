@@ -89,6 +89,7 @@ function delegatedDetails(array $overrides = []): array
         'title' => 'Network support visits, Kisumu County',
         'purpose' => 'Restore connectivity at the constituency offices.',
         'justification' => 'Four offices have been offline since October.',
+        'approval_request' => 'This is to seek your authority for the visits and their budget.',
         'activity_category_id' => ActivityCategory::query()->value('id'),
         'start_date' => today()->addDays(20)->toDateString(),
         'days' => 3,
@@ -274,9 +275,9 @@ it('takes the officer through the memo page: code, details, team, cost and submi
 
     $page->set('code', codeFrom($this->sms))->call('verify')->assertHasNoErrors()
         ->assertSee('The Kisumu network visits')
-        ->assertSee('Continue to step 2')->assertSee('Opens when every field in step 1 is filled in.')
-        // Step 1: every field is needed before step 2 opens, as on the Head's own memo.
-        ->set('title', $details['title'])->call('continueToDates')->assertHasErrors(['purpose', 'justification', 'expected_outputs', 'risks', 'target_audience', 'notes'])->assertSet('aboutDone', false)
+        ->assertSee('Continue to step 2')->assertSee('Opens when the required fields in step 1 are filled in.')
+        // Step 1: the required fields are needed before step 2 opens, as on the Head's own memo.
+        ->set('title', $details['title'])->call('continueToDates')->assertHasErrors(['purpose', 'justification', 'expected_outputs', 'risks', 'approval_request'])->assertHasNoErrors(['target_audience', 'notes'])->assertSet('aboutDone', false)
         ->fill(memoAbout(['title' => $details['title'], 'purpose' => $details['purpose'], 'justification' => $details['justification']]))
         ->call('continueToDates')->assertHasNoErrors()->assertSet('aboutDone', true)->assertDispatched('builder-go', id: 'step-dates')
         ->set('start_date', $details['start_date'])->set('end_date', Carbon::parse($details['start_date'])->addDays(2)->toDateString())

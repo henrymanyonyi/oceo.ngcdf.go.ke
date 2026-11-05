@@ -62,6 +62,11 @@ class MemoDocument
             }
         }
 
+        // The request for approval is the department's to write (5 November 2026); older drafts must add it before submitting.
+        if ($activity->isDepartmentOriginated() && blank(trim((string) $activity->approval_request))) {
+            $add('Write the request for approval (the closing section of the memo).', true);
+        }
+
         if (blank($activity->justification)) {
             $add('Write the introduction and justification (section 1.0 of the memo).', true);
         }
@@ -157,6 +162,8 @@ class MemoDocument
             'nightsBasis' => $this->settings->get('dsa_basis') !== DsaPeriod::BASIS_DAYS,
             'sections' => $this->sections($activity),
             'request' => $this->requestParagraph($activity, $total),
+            // The request as the department typed it, one paragraph per blank-line break; empty keeps the standard wording.
+            'requestTyped' => array_values(array_filter(array_map('trim', preg_split('/\R\s*\R/', (string) $activity->approval_request)))),
             'signatures' => $this->signatures($activity, $submittedAt),
             'total' => $total,
             'byCategory' => $this->byCategory($lines, $total),

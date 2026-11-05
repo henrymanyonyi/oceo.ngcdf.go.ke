@@ -3,7 +3,7 @@
     Board's internal memo template (files/MEMO Template .docx): US Letter, the
     template's margins, black text, bold TO / FROM / DATE / REF NO / SUBJECT, numbered
     section headings, the request for approval, the four signature blocks, then
-    Annex: A (Activity Budget Request, with the signatures repeated) and the
+    Annex: A (Activity Budget Request; the signatures are not repeated there) and the
     Participants table. "Page n of N" is stamped by MemoDocument::pdf().
     The font is Gill Sans MT (App\Support\DocumentFont); the template itself uses Trebuchet MS.
 --}}
@@ -101,8 +101,12 @@
     @endforeach
 
     <h2>{{ count($sections) + 1 }}.0&nbsp;&nbsp;&nbsp;Request for approval</h2>
-    <p>{!! $request !!}</p>
-    <p>Therefore, this is to seek your authority for the above activity and the accompanying budget, to enable achievement of the intended activity.</p>
+    @forelse ($requestTyped as $text)
+        <p>{!! $para($text) !!}</p>
+    @empty
+        <p>{!! $request !!}</p>
+        <p>Therefore, this is to seek your authority for the above activity and the accompanying budget, to enable achievement of the intended activity.</p>
+    @endforelse
 
     @include('memos.partials.signatures', ['signatures' => $signatures])
 
@@ -139,8 +143,6 @@
             </tbody>
         </table>
         @if ($adjusted)<p class="note">"(adjusted)" marks an amount the Office of the CEO changed with a recorded reason.</p>@endif
-
-        @include('memos.partials.signatures', ['signatures' => $signatures])
     </div>
 
     {{-- ── Participants ──────────────────────────────────────────── --}}
