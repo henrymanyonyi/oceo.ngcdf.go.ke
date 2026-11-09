@@ -24,7 +24,8 @@
     $budgetWaiting = $user->can('budgets.approve') ? BudgetStatus::Submitted : BudgetStatus::Returned;
     $budgetCount = match (true) {
         $user->canAny(['budgets.prepare', 'budgets.approve']) => DepartmentBudget::query()->where('status', $budgetWaiting->value)->count(),
-        $user->can('workplans.prepare') && isset($user->department_id) => DepartmentBudget::query()->where('department_id', $user->department_id)->where('status', BudgetStatus::Returned->value)->count(),
+        $user->can('workplans.prepare') && $user->isRegionalCoordinator() => DepartmentBudget::query()->where('region_id', $user->region_id ?? 0)->where('status', BudgetStatus::Returned->value)->count(),
+        $user->can('workplans.prepare') && isset($user->department_id) => DepartmentBudget::query()->where('department_id', $user->department_id)->whereNull('region_id')->where('status', BudgetStatus::Returned->value)->count(),
         default => 0,
     };
     $adjustmentCount = $user->canAny(['budgets.prepare', 'budgets.approve']) ? BudgetAdjustment::query()->where('status', $budgetWaiting->value)->count() : 0;
@@ -49,7 +50,7 @@
             ['route' => 'reports.index', 'match' => 'reports.*', 'icon' => 'fa-file-lines', 'label' => 'Reports', 'can' => 'activities.view'],
         ],
         'Budgeting' => [
-            ['route' => 'budgets.index', 'match' => ['budgets.index', 'budgets.show'], 'icon' => 'fa-wallet', 'label' => $user->canAny(['budgets.prepare', 'budgets.approve']) ? 'Department budgets' : 'Workplan and budget', 'can' => ['budgets.prepare', 'budgets.approve', 'workplans.prepare'], 'count' => $budgetCount],
+            ['route' => 'budgets.index', 'match' => ['budgets.index', 'budgets.show'], 'icon' => 'fa-wallet', 'label' => $user->canAny(['budgets.prepare', 'budgets.approve']) ? 'Department budgets' : ($user->isRegionalCoordinator() ? 'Regional workplan' : 'Workplan and budget'), 'can' => ['budgets.prepare', 'budgets.approve', 'workplans.prepare'], 'count' => $budgetCount],
             ['route' => 'budgets.adjustments', 'match' => 'budgets.adjustments', 'icon' => 'fa-sliders', 'label' => 'Budget adjustments', 'can' => ['budgets.prepare', 'budgets.approve'], 'count' => $adjustmentCount],
             ['route' => 'department-costs', 'params' => ['lens' => 'budget'], 'match' => 'department-costs', 'active' => $budgetLens, 'icon' => 'fa-scale-balanced', 'label' => 'Budget position', 'can' => 'activities.view'],
         ],

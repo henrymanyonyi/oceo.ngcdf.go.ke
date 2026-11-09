@@ -166,7 +166,7 @@ class Board extends Component
         $perspective = $tracker->perspective($user);
 
         $memos = $this->filtered($tracker->query($user, $tab))
-            ->with(['organisingDepartment', 'type', 'creator', 'responsibleHod', 'reviewNotes.user', 'statusHistory.user'])
+            ->with(['organisingDepartment', 'originatingRegion', 'type', 'creator', 'responsibleHod', 'reviewNotes.user', 'statusHistory.user'])
             ->latest('updated_at')
             ->paginate(15);
 
@@ -181,8 +181,14 @@ class Board extends Component
             'departments' => $perspective === MemoTracker::PERSPECTIVE_DEPARTMENT ? collect() : Department::query()->orderBy('name')->get(['id', 'name']),
             'types' => ActivityType::query()->orderBy('name')->get(['id', 'name']),
             'department' => $perspective === MemoTracker::PERSPECTIVE_DEPARTMENT ? $user->department : null,
+            'region' => $perspective === MemoTracker::PERSPECTIVE_DEPARTMENT && $user->isRegionalCoordinator() ? $user->region : null,
             // A Head of Department sees their own department's budget for the year before preparing a memo.
-            'budget' => $perspective === MemoTracker::PERSPECTIVE_DEPARTMENT && $user->department_id ? $budget->forDepartment(FinancialYear::current(), $user->department_id) : null,
+            'budget' => match (true) {
+                $perspective !== MemoTracker::PERSPECTIVE_DEPARTMENT => null,
+                $user->isRegionalCoordinator() && $user->region_id => $budget->forRegion(FinancialYear::current(), $user->region_id),
+                (bool) $user->department_id => $budget->forDepartment(FinancialYear::current(), $user->department_id),
+                default => null,
+            },
             'canRequest' => $user->isHeadOfDepartment(),
             'requests' => $tab === 'from_staff' && $user->isHeadOfDepartment() ? app(DelegatedMemos::class)->linksFor($user) : collect(),
             'requestMatches' => $this->showRequest && mb_strlen(trim($this->requestSearch)) >= 2

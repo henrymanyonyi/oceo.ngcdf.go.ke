@@ -203,6 +203,38 @@ class Form extends Component
         return Auth::user()->can('activities.manage');
     }
 
+    /**
+     * The memo's own unit for its budget: the region of a Regional Coordinator (or of the regional memo
+     * being edited), else none (the department's own budget).
+     */
+    private function unitRegionId(): ?int
+    {
+        if ($this->activity?->originating_region_id) {
+            return (int) $this->activity->originating_region_id;
+        }
+        $user = Auth::user();
+
+        return ! $this->isOffice() && $user->isRegionalCoordinator() ? (int) $user->region_id : null;
+    }
+
+    /**
+     * Choosing the workplan activity a memo carries out fills what the memo has not said yet: the
+     * title, the purpose (the objective) and the expected outputs (the deliverables), all still editable.
+     */
+    public function updatedBudgetLineId(string $value): void
+    {
+        $line = $value !== '' ? BudgetLine::query()->approved()->find((int) $value) : null;
+        if (! $line) {
+            return;
+        }
+
+        foreach (['title' => $line->name, 'purpose' => $line->objective, 'expected_outputs' => $line->deliverables] as $field => $text) {
+            if (trim((string) $this->{$field}) === '' && filled($text)) {
+                $this->{$field} = (string) $text;
+            }
+        }
+    }
+
     public function updatedOrganisingDepartmentId(): void
     {
         $this->responsible_hod_id = '';
@@ -447,6 +479,7 @@ class Form extends Component
         $start = rescue(fn () => $this->start_date ? Carbon::parse($this->start_date) : null, null, false);
         $days = $this->dayCount();
         $fy = $start ? FinancialYear::for($start)->label() : FinancialYear::current()->label();
+        $regionId = $this->unitRegionId();
 
         return view('livewire.activities.form', [
             'period' => $start && $days ? DsaPeriod::of($start, $days) : null,
@@ -461,8 +494,15 @@ class Form extends Component
             'office' => $this->isOffice(),
             'pageSteps' => $this->embedded ? [] : $this->pageSteps(),
             'fullAbout' => $this->requiresFullAbout(),
-            'budget' => $this->organising_department_id ? $budget->forDepartment(FinancialYear::fromLabel($fy), (int) $this->organising_department_id) : null,
-            'budgetLines' => BudgetLine::query()->approved()->where('financial_year', $fy)->when($this->organising_department_id, fn ($q, $id) => $q->where('department_id', $id))->orderBy('name')->get(),
+            'budget' => $regionId
+                ? $budget->forRegion(FinancialYear::fromLabel($fy), $regionId)
+                : ($this->organising_department_id ? $budget->forDepartment(FinancialYear::fromLabel($fy), (int) $this->organising_department_id) : null),
+            // Only the memo's own unit's approved lines: the region's workplan, or the department's own budget.
+            'budgetLines' => BudgetLine::query()->approved()->where('financial_year', $fy)
+                ->when($this->organising_department_id, fn ($q, $id) => $q->where('department_id', $id))
+                ->whereHas('budget', fn ($q) => $regionId ? $q->where('region_id', $regionId) : $q->whereNull('region_id'))
+                ->orderBy('name')->get(),
+            'regionalMemo' => $regionId !== null,
             'regions' => Region::query()->orderBy('name')->get(['id', 'name']),
             'counties' => County::query()->when($this->region_id, fn ($q, $id) => $q->whereHas('constituencies', fn ($c) => $c->where('region_id', $id)))->orderBy('name')->get(['id', 'name']),
             'constituencies' => $this->county_id ? Constituency::query()->where('county_id', $this->county_id)->orderBy('name')->get(['id', 'name']) : collect(),

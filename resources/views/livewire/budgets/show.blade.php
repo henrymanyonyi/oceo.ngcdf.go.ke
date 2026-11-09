@@ -17,7 +17,7 @@
     $signed = fn (int $c) => $c === 0 ? '' : ($c > 0 ? '+' : '−').Money::format(abs($c));
 @endphp
 
-<x-ui.page icon="fa-wallet" :title="$b->department?->name.' workplan and budget · FY '.$b->financial_year" :subtitle="$approved ? 'Approved by the CEO: the department\'s budget for the year. Changes during the year are adjustments, each recorded with its reason.' : 'Counts for nothing until the CEO approves it.'">
+<x-ui.page icon="fa-wallet" :title="$b->unitName().' workplan and budget · FY '.$b->financial_year" :subtitle="$approved ? 'Approved by the CEO: the department\'s budget for the year. Changes during the year are adjustments, each recorded with its reason.' : 'Counts for nothing until the CEO approves it.'">
     <x-slot:pills><x-ui.status :status="$status" /></x-slot:pills>
     <x-slot:actions>
         <a href="{{ route('budgets.index', ['fy' => $b->financial_year]) }}" wire:navigate class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-arrow-left text-xs"></i>{{ $ownDepartment ? 'Workplan and budget' : 'All budgets' }}</a>

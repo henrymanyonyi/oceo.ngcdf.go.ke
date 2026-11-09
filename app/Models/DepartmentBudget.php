@@ -25,7 +25,7 @@ class DepartmentBudget extends Model
 {
     use Auditable, SoftDeletes;
 
-    protected $fillable = ['department_id', 'financial_year', 'objectives', 'notes', 'prepared_by'];
+    protected $fillable = ['department_id', 'region_id', 'financial_year', 'objectives', 'notes', 'prepared_by'];
 
     protected $hidden = ['workplan_file_path'];
 
@@ -43,6 +43,25 @@ class DepartmentBudget extends Model
     public function department(): BelongsTo
     {
         return $this->belongsTo(Department::class);
+    }
+
+    /** A regional workplan's region; null for a department's own. @return BelongsTo<Region, $this> */
+    public function region(): BelongsTo
+    {
+        return $this->belongsTo(Region::class);
+    }
+
+    public function isRegional(): bool
+    {
+        return $this->region_id !== null;
+    }
+
+    /** "ICT", or "Coast Region (Programmes)" for a regional workplan. */
+    public function unitName(): string
+    {
+        return $this->region_id
+            ? (string) $this->region?->name.($this->department ? ' ('.$this->department->name.')' : '')
+            : (string) $this->department?->name;
     }
 
     /** @return HasMany<BudgetLine, $this> */

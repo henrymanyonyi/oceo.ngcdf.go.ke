@@ -48,6 +48,9 @@ class User extends Authenticatable
 
     public const ROLE_HOD = 'hod';
 
+    /** One per region: originates memos from the region's approved workplan (November 2026, CEO's approval). */
+    public const ROLE_RC = 'regional_coordinator';
+
     /** @var array<string, string> role => label */
     public const ROLES = [
         self::ROLE_CEO => 'Chief Executive Officer',
@@ -55,10 +58,14 @@ class User extends Authenticatable
         self::ROLE_ASSISTANT_CHIEF_OF_STAFF => 'Assistant Chief of Staff',
         self::ROLE_ADMIN => 'System Administrator',
         self::ROLE_HOD => 'Head of Department',
+        self::ROLE_RC => 'Regional Coordinator',
     ];
 
     /** Roles held by one active account per department instead of one in total. */
     public const DEPARTMENTAL_ROLES = [self::ROLE_HOD];
+
+    /** Roles held by one active account per region. */
+    public const REGIONAL_ROLES = [self::ROLE_RC];
 
     /**
      * The attributes that are mass assignable.
@@ -70,6 +77,7 @@ class User extends Authenticatable
         'email',
         'phone',
         'department_id',
+        'region_id',
         'staff_id',
         'password',
         'is_active',
@@ -141,6 +149,23 @@ class User extends Authenticatable
         return $this->belongsTo(Department::class);
     }
 
+    /** A Regional Coordinator's region. @return BelongsTo<Region, $this> */
+    public function region(): BelongsTo
+    {
+        return $this->belongsTo(Region::class);
+    }
+
+    public function isRegionalCoordinator(): bool
+    {
+        return $this->hasRole(self::ROLE_RC);
+    }
+
+    /** Originates memos for their own unit: a Head of Department (department) or a Regional Coordinator (region). */
+    public function isMemoOriginator(): bool
+    {
+        return $this->hasAnyRole([self::ROLE_HOD, self::ROLE_RC]);
+    }
+
     /**
      * The officer on the staff list this account was made from, if any.
      *
@@ -172,6 +197,12 @@ class User extends Authenticatable
     public function signingDesignation(): string
     {
         $designation = isset($this->staff_id) ? Staff::query()->with('designation')->find($this->staff_id)?->designation?->name : null;
+        // A Regional Coordinator signs for their region: "Regional Coordinator, Coast Region".
+        if ($this->isRegionalCoordinator()) {
+            $region = isset($this->region_id) ? Region::query()->find($this->region_id)?->name : null;
+
+            return ($designation ?: self::ROLES[self::ROLE_RC]).($region ? ", {$region}" : '');
+        }
         $department = isset($this->department_id) ? Department::query()->find($this->department_id)?->name : null;
 
         return ($designation ?: ($this->isHeadOfDepartment() ? 'Head of Department' : $this->roleLabel())).($department ? ", {$department}" : '');

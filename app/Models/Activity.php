@@ -131,6 +131,30 @@ class Activity extends Model
         });
     }
 
+    /** A Regional Coordinator's memo: the region it comes from (null for a department's memo). @return BelongsTo<Region, $this> */
+    public function originatingRegion(): BelongsTo
+    {
+        return $this->belongsTo(Region::class, 'originating_region_id');
+    }
+
+    public function isRegional(): bool
+    {
+        return $this->originating_region_id !== null;
+    }
+
+    /**
+     * Memos of the same originating unit as this one: the same region for a regional memo, otherwise the
+     * same department's own memos (a region's memos are never counted as its coordinator's department's).
+     *
+     * @param  Builder<static>  $query
+     */
+    public function scopeSameUnitAs(Builder $query, Activity $memo): void
+    {
+        $memo->originating_region_id
+            ? $query->where('originating_region_id', $memo->originating_region_id)
+            : $query->where('organising_department_id', $memo->organising_department_id ?? 0)->whereNull('originating_region_id');
+    }
+
     /** @return BelongsTo<ActivityCategory, $this> */
     public function category(): BelongsTo
     {
@@ -573,8 +597,14 @@ class Activity extends Model
             return;
         }
 
+        if ($user->can('memos.originate') && $user->isRegionalCoordinator()) {
+            $query->where('originating_region_id', $user->region_id ?? 0);
+
+            return;
+        }
+
         if ($user->can('memos.originate') && $user->department_id) {
-            $query->where('organising_department_id', $user->department_id);
+            $query->where('organising_department_id', $user->department_id)->whereNull('originating_region_id');
 
             return;
         }
@@ -600,10 +630,20 @@ class Activity extends Model
         return $this->isVisibleTo($user) || $this->isReadableByInstructedHead($user);
     }
 
+    /** The Office of the CEO; a Regional Coordinator for their region's memos; a Head for their department's own (not its regions'). */
     public function isVisibleTo(User $user): bool
     {
-        return $user->can('activities.view')
-            || ($user->can('memos.originate') && $user->department_id !== null && (int) $this->organising_department_id === (int) $user->department_id);
+        if ($user->can('activities.view')) {
+            return true;
+        }
+        if (! $user->can('memos.originate')) {
+            return false;
+        }
+        if ($user->isRegionalCoordinator()) {
+            return $user->region_id !== null && (int) $this->originating_region_id === (int) $user->region_id;
+        }
+
+        return $user->department_id !== null && $this->originating_region_id === null && (int) $this->organising_department_id === (int) $user->department_id;
     }
 
     /**

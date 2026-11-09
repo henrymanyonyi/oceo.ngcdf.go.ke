@@ -871,6 +871,10 @@ class ActivityLifecycle
 
     private function departmentHasHead(Activity $activity): bool
     {
+        if ($activity->originating_region_id) {
+            return User::query()->role(User::ROLE_RC)->where('is_active', true)->where('region_id', $activity->originating_region_id)->exists();
+        }
+
         return User::query()->role(User::ROLE_HOD)->where('is_active', true)
             ->where(fn ($q) => $q->where('department_id', $activity->organising_department_id)->when($activity->responsible_hod_id, fn ($q, $id) => $q->orWhereKey($id)))
             ->exists();

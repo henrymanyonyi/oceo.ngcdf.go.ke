@@ -58,20 +58,29 @@ class Budgeting
         return (bool) $user?->can('budgets.prepare');
     }
 
-    /** The Office of the CEO for any department; a Head of Department for their own only. */
-    public static function canPrepareFor(?User $user, ?int $departmentId): bool
+    /**
+     * The Office of the CEO for any department or region; a Head of Department for their department's own
+     * workplan only; a Regional Coordinator for their region's only (never the department's own).
+     */
+    public static function canPrepareFor(?User $user, ?int $departmentId, ?int $regionId = null): bool
     {
         if (self::canPrepare($user)) {
             return true;
         }
+        if (! $user?->can('workplans.prepare')) {
+            return false;
+        }
+        if ($user->isRegionalCoordinator()) {
+            return $regionId !== null && isset($user->region_id) && (int) $user->region_id === $regionId;
+        }
 
-        return (bool) $user?->can('workplans.prepare') && $departmentId !== null && isset($user->department_id) && (int) $user->department_id === $departmentId;
+        return $regionId === null && $departmentId !== null && isset($user->department_id) && (int) $user->department_id === $departmentId;
     }
 
-    /** May see the budget at all: the Office of the CEO, or the department's own Head. */
+    /** May see the budget at all: the Office of the CEO, or the department's own Head (the region's coordinator for a regional workplan). */
     public static function canView(?User $user, DepartmentBudget $budget): bool
     {
-        return (bool) $user?->canAny(['budgets.prepare', 'budgets.approve']) || self::canPrepareFor($user, $budget->department_id);
+        return (bool) $user?->canAny(['budgets.prepare', 'budgets.approve']) || self::canPrepareFor($user, $budget->department_id, $budget->region_id);
     }
 
     public static function canApprove(?User $user): bool
@@ -81,17 +90,20 @@ class Budgeting
 
     // ── Department budgets ───────────────────────────────────────────
 
-    public function create(int $departmentId, string $financialYear, ?string $notes, User $user, ?string $objectives = null): DepartmentBudget
+    /** A department's own budget, or (with $regionId) a region's workplan under that department. One of each per year. */
+    public function create(int $departmentId, string $financialYear, ?string $notes, User $user, ?string $objectives = null, ?int $regionId = null): DepartmentBudget
     {
-        $this->assertPrepare($user, $departmentId);
+        $this->assertPrepare($user, $departmentId, $regionId);
 
-        return DB::transaction(function () use ($departmentId, $financialYear, $notes, $user, $objectives) {
-            $exists = DepartmentBudget::query()->where('department_id', $departmentId)->where('financial_year', $financialYear)->lockForUpdate()->exists();
+        return DB::transaction(function () use ($departmentId, $financialYear, $notes, $user, $objectives, $regionId) {
+            $exists = DepartmentBudget::query()->where('financial_year', $financialYear)
+                ->when($regionId, fn ($q, $id) => $q->where('region_id', $id), fn ($q) => $q->where('department_id', $departmentId)->whereNull('region_id'))
+                ->lockForUpdate()->exists();
             if ($exists) {
-                throw new ActivityWorkflowException("This department already has a budget for FY {$financialYear}. Open it to change its lines, or propose an adjustment if it is approved.");
+                throw new ActivityWorkflowException(($regionId ? 'This region already has a workplan' : 'This department already has a budget')." for FY {$financialYear}. Open it to change its lines, or propose an adjustment if it is approved.");
             }
 
-            $budget = new DepartmentBudget(['department_id' => $departmentId, 'financial_year' => $financialYear, 'objectives' => $objectives ?: null, 'notes' => $notes ?: null, 'prepared_by' => $user->id]);
+            $budget = new DepartmentBudget(['department_id' => $departmentId, 'region_id' => $regionId, 'financial_year' => $financialYear, 'objectives' => $objectives ?: null, 'notes' => $notes ?: null, 'prepared_by' => $user->id]);
             $budget->forceFill(['status' => BudgetStatus::Draft])->save();
 
             return $budget;
@@ -297,7 +309,7 @@ class Budgeting
 
     public function submit(DepartmentBudget|BudgetAdjustment $item, User $user): void
     {
-        $this->assertPrepare($user, $item instanceof DepartmentBudget ? $item->department_id : null);
+        $this->assertPrepare($user, $item instanceof DepartmentBudget ? $item->department_id : null, $item instanceof DepartmentBudget ? $item->region_id : null);
 
         DB::transaction(function () use ($item, $user) {
             $this->lockAt($item, [BudgetStatus::Draft, BudgetStatus::Returned]);
@@ -396,7 +408,7 @@ class Budgeting
     /** A draft or returned budget or adjustment that is no longer wanted. Kept, soft-deleted. */
     public function discard(DepartmentBudget|BudgetAdjustment $item, User $user): void
     {
-        $this->assertPrepare($user, $item instanceof DepartmentBudget ? $item->department_id : null);
+        $this->assertPrepare($user, $item instanceof DepartmentBudget ? $item->department_id : null, $item instanceof DepartmentBudget ? $item->region_id : null);
 
         DB::transaction(function () use ($item) {
             $this->lockAt($item, [BudgetStatus::Draft, BudgetStatus::Returned], 'Only a draft or a returned budget or adjustment can be discarded.');
@@ -465,11 +477,11 @@ class Budgeting
     // ── Guards ───────────────────────────────────────────────────────
 
     /** The Office of the CEO, or (for a department's own budget) its Head. Adjustments: the Office of the CEO only. */
-    private function assertPrepare(User $user, ?int $departmentId = null): void
+    private function assertPrepare(User $user, ?int $departmentId = null, ?int $regionId = null): void
     {
-        if (! self::canPrepareFor($user, $departmentId)) {
+        if (! self::canPrepareFor($user, $departmentId, $regionId)) {
             throw new AuthorizationException($user->can('workplans.prepare')
-                ? 'You can prepare only your own department\'s workplan and budget.'
+                ? ($user->isRegionalCoordinator() ? 'You can prepare only your own region\'s workplan.' : 'You can prepare only your own department\'s workplan and budget.')
                 : 'Only the CEO, the Chief of Staff, the Assistant Chief of Staff or the department\'s Head prepares budgets.');
         }
     }
@@ -489,7 +501,7 @@ class Budgeting
 
     private function assertEditable(DepartmentBudget $budget, User $user): void
     {
-        $this->assertPrepare($user, $budget->department_id);
+        $this->assertPrepare($user, $budget->department_id, $budget->region_id);
         if (! $budget->status->isEditable()) {
             throw new ActivityWorkflowException($budget->status === BudgetStatus::Approved
                 ? 'This budget is approved. Propose an adjustment to change it.'
@@ -627,7 +639,11 @@ class Budgeting
     {
         $budget = $item instanceof DepartmentBudget ? $item : $item->budget;
         $already = array_filter([$item->prepared_by, $item->submitted_by]);
-        $heads = User::query()->role(User::ROLE_HOD)->where('is_active', true)->where('department_id', $budget->department_id)
+        // The department's Head for its own budget; the region's coordinator for a regional workplan.
+        $heads = User::query()->where('is_active', true)
+            ->when($budget->region_id,
+                fn ($q, $id) => $q->role(User::ROLE_RC)->where('region_id', $id),
+                fn ($q) => $q->role(User::ROLE_HOD)->where('department_id', $budget->department_id))
             ->whereKeyNot($actor->id)->when($already !== [], fn ($q) => $q->whereKeyNot($already))->get();
 
         $this->alerts->toUsers($heads, $alert);

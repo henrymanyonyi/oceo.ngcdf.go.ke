@@ -15,7 +15,7 @@
 @endphp
 
 <div {{ $attributes->merge(['class' => 'space-y-2.5']) }}>
-    <p class="{{ Ui::MICRO }}">Budget position · {{ $p['department']?->name ?? 'No department' }} · FY {{ $p['financial_year'] }}</p>
+    <p class="{{ Ui::MICRO }}">{{ isset($p['region']) ? 'Workplan position' : 'Budget position' }} · {{ ($p['region'] ?? null)?->name ?? $p['department']?->name ?? 'No department' }} · FY {{ $p['financial_year'] }}</p>
     @if ($p['allocation'] === null)
         <p class="text-[13px] text-amber-700"><i class="fa-solid fa-circle-info mr-1"></i>No approved budget is recorded for this department and year, so the balance cannot be shown. Budgets are prepared under Budgeting and count once the CEO approves them.</p>
     @endif

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Exceptions\ActivityWorkflowException;
 use App\Models\Department;
 use App\Models\Designation;
+use App\Models\Office;
 use App\Models\ScheduledStaffChange;
 use App\Models\Staff;
 use App\Models\StaffChange;
@@ -70,7 +71,12 @@ class StaffChanges
      */
     public function accessOptions(User $actor): array
     {
-        $options = [self::KEEP => 'Keep their current access', User::ROLE_HOD => 'Head of Department (of the department above)', self::NONE => 'No system access'];
+        $options = [
+            self::KEEP => 'Keep their current access',
+            User::ROLE_HOD => 'Head of Department (of the department above)',
+            User::ROLE_RC => 'Regional Coordinator (of the region of their duty station)',
+            self::NONE => 'No system access',
+        ];
 
         if ($actor->can('users.manage')) {
             foreach (self::OFFICE_ROLES as $role) {
@@ -302,7 +308,10 @@ class StaffChanges
 
             // The system access.
             $password = null;
-            if ($toRole !== $fromRole || ($toRole === User::ROLE_HOD && (int) $account?->department_id !== (int) $department?->id)) {
+            $region = $toRole === User::ROLE_RC ? $this->dutyRegion($staff) : null;
+            $moved = ($toRole === User::ROLE_HOD && (int) $account?->department_id !== (int) $department?->id)
+                || ($toRole === User::ROLE_RC && ((int) $account?->region_id !== (int) $region || (int) $account?->department_id !== (int) $department?->id));
+            if ($toRole !== $fromRole || $moved) {
                 if ($toRole === User::ROLE_HOD) {
                     $this->replaceHead($department, $account, (bool) ($data['replace_head'] ?? false), $data, $actor);
                 }
@@ -351,6 +360,21 @@ class StaffChanges
             throw new ActivityWorkflowException('Choose the department the officer will head.');
         }
 
+        // A Regional Coordinator coordinates the region of their duty station; one active coordinator per region.
+        if ($toRole === User::ROLE_RC) {
+            if (! $department) {
+                throw new ActivityWorkflowException('Choose the department the Regional Coordinator belongs to.');
+            }
+            $region = $this->dutyRegion($staff);
+            if (! $region) {
+                throw new ActivityWorkflowException("{$staff->name}'s duty station is not in a region. Set a regional duty station on their staff record first.");
+            }
+            $holder = User::query()->role(User::ROLE_RC)->where('is_active', true)->where('region_id', $region)->when($account, fn ($q) => $q->whereKeyNot($account->id))->first();
+            if ($holder) {
+                throw new ActivityWorkflowException("{$holder->name} is the active Regional Coordinator of that region. Change their access first.");
+            }
+        }
+
         if ($access === self::KEEP && $fromRole === User::ROLE_HOD && (int) $department?->id !== (int) $account?->department_id) {
             throw new ActivityWorkflowException("{$staff->name} is Head of {$account->department?->name}. Moving them to another department ends that: choose \"Head of Department\" to make them Head of the new department, or \"No system access\".");
         }
@@ -368,6 +392,12 @@ class StaffChanges
         if ($toRole !== null && ! $account && User::query()->whereRaw('LOWER(email) = ?', [mb_strtolower((string) $staff->email)])->exists()) {
             throw new ActivityWorkflowException("Another account already uses {$staff->email}.");
         }
+    }
+
+    /** The region of the officer's duty station, if it is in one. */
+    private function dutyRegion(Staff $staff): ?int
+    {
+        return $staff->office_id ? Office::query()->whereKey($staff->office_id)->value('region_id') : null;
     }
 
     /** The department's current Head, if another officer, is deactivated only when the change says so. */
@@ -431,7 +461,8 @@ class StaffChanges
 
         $account->forceFill([
             'staff_id' => $staff->id,
-            'department_id' => $role === User::ROLE_HOD ? $department->id : null,
+            'department_id' => in_array($role, [User::ROLE_HOD, User::ROLE_RC], true) ? $department->id : null,
+            'region_id' => $role === User::ROLE_RC ? $this->dutyRegion($staff) : null,
             'is_active' => true,
         ])->save();
         $account->syncRoles([$role]);

@@ -4,6 +4,7 @@ namespace Database\Factories;
 
 use App\Models\Department;
 use App\Models\PrivacyConsent;
+use App\Models\Region;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
@@ -103,5 +104,11 @@ class UserFactory extends Factory
     public function headOf(Department $department): static
     {
         return $this->state(fn (array $attributes) => ['department_id' => $department->id])->role(User::ROLE_HOD);
+    }
+
+    /** The Regional Coordinator of the given region, belonging to the given department. */
+    public function coordinatorOf(Region $region, Department $department): static
+    {
+        return $this->state(fn (array $attributes) => ['department_id' => $department->id, 'region_id' => $region->id])->role(User::ROLE_RC);
     }
 }

@@ -82,6 +82,11 @@ class RolesAndPermissionsSeeder extends Seeder
         User::ROLE_HOD => [
             'memos.originate', 'staff.add', 'instructions.action', 'workplans.prepare',
         ],
+        // Their own region's memos and workplan only (November 2026, CEO's approval): prepared from the region's
+        // approved workplan and sent along the same routes as a Head's. No activities.view, no staff list.
+        User::ROLE_RC => [
+            'memos.originate', 'workplans.prepare',
+        ],
     ];
 
     public function run(): void

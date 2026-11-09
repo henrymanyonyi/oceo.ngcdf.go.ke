@@ -60,6 +60,22 @@ class MemoDocument
             }
         }
 
+        // A Regional Coordinator's memo comes from the region's approved workplan (November 2026): it names the
+        // workplan activity it carries out. Another live memo on the same activity is shown, not blocked: a workplan
+        // activity may be carried out more than once (no rule requires one memo each).
+        if ($activity->originating_region_id) {
+            if (! $activity->budget_line_id) {
+                $add('Choose the activity from your region\'s approved workplan that this memo carries out.', true, forHead: true);
+            } else {
+                $others = Activity::query()->where('budget_line_id', $activity->budget_line_id)->whereKeyNot($activity->id)
+                    ->whereNotIn('status', ActivityStatus::values(ActivityStatus::Draft, ActivityStatus::WithHod, ActivityStatus::ReturnedToPreparer, ActivityStatus::Declined, ActivityStatus::Cancelled))
+                    ->get(['reference', 'memo_number', 'source_reference']);
+                if ($others->isNotEmpty()) {
+                    $add('This workplan activity already has '.$others->count().' other memo'.($others->count() === 1 ? '' : 's').' ('.$others->map(fn (Activity $a) => $a->memoReference() ?? $a->reference)->implode(', ').'). Make sure this one is not a duplicate.', false);
+                }
+            }
+        }
+
         // The request for approval is the department's to write (5 November 2026); older drafts must add it before submitting.
         if ($activity->isDepartmentOriginated() && blank(trim((string) $activity->approval_request))) {
             $add('Write the request for approval (the closing section of the memo).', true);
@@ -208,7 +224,7 @@ class MemoDocument
         }
 
         foreach ([$activity->responsibleHod, $activity->creator] as $user) {
-            if ($user?->isHeadOfDepartment()) {
+            if ($user?->isMemoOriginator()) {
                 return $user->signingDesignation();
             }
         }
@@ -297,7 +313,7 @@ class MemoDocument
         // The Head signs with their designation as recorded when they submitted ("Ag." if acting);
         // before that, with their designation on the staff list.
         $hodDesignation = $activity->signedDesignation()
-            ?? ($preparer?->isHeadOfDepartment() ? $preparer->signingDesignation() : null);
+            ?? ($preparer?->isMemoOriginator() ? $preparer->signingDesignation() : null);
 
         // Sent directly to the CEO: nobody reviews or validates it, so those blocks are left out.
         $review = $activity->isDirectToCeo() ? [] : [

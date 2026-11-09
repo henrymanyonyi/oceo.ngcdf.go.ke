@@ -31,18 +31,19 @@ class ReportCompliance
      */
     public function outstandingFor(Activity $memo): Collection
     {
-        if (! $memo->organising_department_id) {
+        if (! $memo->organising_department_id && ! $memo->originating_region_id) {
             return collect();
         }
 
+        // Each department and each region answers for its own reports only.
         return Activity::query()
-            ->where('organising_department_id', $memo->organising_department_id)
+            ->sameUnitAs($memo)
             ->whereKeyNot($memo->id)
             ->status(ActivityStatus::Completed)
             ->whereNotNull('report_due_on')
             ->whereDate('report_due_on', '<', today())
             ->where(fn ($q) => $q->whereDoesntHave('report')->orWhereHas('report', fn ($r) => $r->where('status', ReportReceipt::STATUS_RETURNED)))
-            ->with(['organisingDepartment', 'report'])
+            ->with(['organisingDepartment', 'originatingRegion', 'report'])
             ->orderBy('report_due_on')
             ->get();
     }
@@ -58,7 +59,7 @@ class ReportCompliance
             'id' => $a->id,
             'title' => $a->title,
             'reference' => $a->memoReference() ?? $a->reference,
-            'department' => $a->organisingDepartment?->name,
+            'department' => $a->originatingRegion?->name ?? $a->organisingDepartment?->name,
             'start' => $a->start_date->format('d M Y'),
             'end' => $a->end_date->format('d M Y'),
             'due' => $a->report_due_on->format('d M Y'),
@@ -93,7 +94,7 @@ class ReportCompliance
         }
 
         throw new ActivityWorkflowException(sprintf(
-            'This memo cannot be submitted yet: the department has %d overdue activity %s (%s). Submit %s first; the memo stays saved as a draft.',
+            'This memo cannot be submitted yet: the '.($memo->originating_region_id ? 'region' : 'department').' has %d overdue activity %s (%s). Submit %s first; the memo stays saved as a draft.',
             $outstanding->count(),
             $outstanding->count() === 1 ? 'report' : 'reports',
             $outstanding->map(fn (Activity $a) => ($a->memoReference() ?? $a->reference).', due '.$a->report_due_on->format('d M Y'))->implode('; '),

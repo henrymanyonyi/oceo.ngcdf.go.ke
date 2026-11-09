@@ -13,6 +13,7 @@ use App\Models\ActivityAmendment;
 use App\Models\ActivityCost;
 use App\Models\ActivityLocation;
 use App\Models\ActivityParticipant;
+use App\Models\BudgetLine;
 use App\Models\CostCategory;
 use App\Models\DsaRate;
 use App\Models\Staff;
@@ -80,7 +81,12 @@ class ActivityEditor
             if (! $user->department_id) {
                 throw new AuthorizationException('Your account is not linked to a department. Ask the System Administrator.');
             }
+            if ($user->isRegionalCoordinator() && ! $user->region_id) {
+                throw new AuthorizationException('Your account is not linked to a region. Ask the System Administrator.');
+            }
 
+            // A Regional Coordinator's memo stays under their department but belongs to their region,
+            // with them as the responsible officer.
             $attributes = array_merge($attributes, [
                 'organising_department_id' => $user->department_id,
                 'responsible_hod_id' => $user->id,
@@ -88,8 +94,14 @@ class ActivityEditor
             ]);
         }
 
-        return DB::transaction(function () use ($attributes, $user, $actorName) {
+        $region = $user && ! $user->can('activities.manage') && $user->isRegionalCoordinator() ? $user->region_id : null;
+        if ($user && ! $user->can('activities.manage')) {
+            $this->assertBudgetLineInUnit($attributes['budget_line_id'] ?? null, (int) $attributes['organising_department_id'], $region);
+        }
+
+        return DB::transaction(function () use ($attributes, $user, $actorName, $region) {
             $activity = new Activity($this->withDates($attributes));
+            $activity->forceFill(['originating_region_id' => $region]);
             $activity->created_by = $user?->id;
             $activity->forceFill($this->flags($activity->start_date, today()));
             $activity->save();
@@ -114,6 +126,9 @@ class ActivityEditor
         if (! $user->can('activities.manage')) {
             // The department and responsible head stay as they are.
             unset($attributes['organising_department_id'], $attributes['responsible_hod_id'], $attributes['responsible_hod_name']);
+            if (array_key_exists('budget_line_id', $attributes)) {
+                $this->assertBudgetLineInUnit($attributes['budget_line_id'], (int) $activity->organising_department_id, $activity->originating_region_id);
+            }
         }
 
         $attributes = $this->withDates($attributes + ['start_date' => $activity->start_date, 'days' => $activity->days]);
@@ -139,6 +154,28 @@ class ActivityEditor
         });
 
         return $activity;
+    }
+
+    /**
+     * A Head of Department or Regional Coordinator charges only a line of their own unit's approved
+     * workplan: their department's own budget, or their region's (never another unit's).
+     */
+    private function assertBudgetLineInUnit(mixed $budgetLineId, int $departmentId, ?int $regionId): void
+    {
+        if (blank($budgetLineId)) {
+            return;
+        }
+
+        $inUnit = BudgetLine::query()->whereKey($budgetLineId)
+            ->whereHas('budget', fn ($q) => $q->approved()->where('department_id', $departmentId)
+                ->when($regionId, fn ($q, $id) => $q->where('region_id', $id), fn ($q) => $q->whereNull('region_id')))
+            ->exists();
+
+        if (! $inUnit) {
+            throw new AuthorizationException($regionId
+                ? 'Choose an activity from your region\'s approved workplan.'
+                : 'Choose a line of your department\'s approved budget.');
+        }
     }
 
     /** @param  array{region_id?: ?int, county_id?: ?int, constituency_id?: ?int, venue?: ?string}  $data */

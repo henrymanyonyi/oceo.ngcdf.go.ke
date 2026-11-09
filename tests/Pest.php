@@ -134,7 +134,7 @@ function departmentMemo(User $hod, array $overrides = []): Activity
  */
 function approvedBudgetLine(Department $department, string $financialYear, string $amount, ?string $code = null, string $name = 'Domestic travel'): BudgetLine
 {
-    $budget = DepartmentBudget::query()->firstOrNew(['department_id' => $department->id, 'financial_year' => $financialYear]);
+    $budget = DepartmentBudget::query()->whereNull('region_id')->firstOrNew(['department_id' => $department->id, 'financial_year' => $financialYear]);
     $budget->forceFill(['status' => BudgetStatus::Approved, 'approved_at' => now()])->save();
 
     return $budget->lines()->create(['department_id' => $department->id, 'financial_year' => $financialYear, 'code' => $code, 'name' => $name, 'amount' => $amount]);

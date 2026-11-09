@@ -1,5 +1,5 @@
 @use('App\Support\Ui')
-<x-ui.page icon="fa-users-gear" title="User accounts" subtitle="One account per role: CEO, Chief of Staff and Assistant Chief of Staff (FRD CF-01), the System Administrator for settings and logs only, and one Head of Department per department for their own memos. No other role or account can exist.">
+<x-ui.page icon="fa-users-gear" title="User accounts" subtitle="One account per role: CEO, Chief of Staff and Assistant Chief of Staff (FRD CF-01), the System Administrator for settings and logs only, one Head of Department per department and one Regional Coordinator per region for their own memos. No other role or account can exist.">
     @if ($oneTimePassword)
         <div class="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm" role="alert">
             <p class="font-semibold"><i class="fa-solid fa-key mr-1"></i>One-time password for {{ $oneTimeFor }}</p>
@@ -83,6 +83,48 @@
                                             <button type="button" wire:click="openContact({{ $u->id }})" class="{{ Ui::BTN_TINT }}">Contact</button>
                                             <button type="button" wire:click="sendPasswordLink({{ $u->id }})" wire:loading.attr="disabled" wire:target="sendPasswordLink({{ $u->id }})" class="{{ Ui::BTN_TINT }}" title="Email them a link to set a new password">Email password link</button>
                         <button type="button" wire:click="confirmReset({{ $u->id }})" class="{{ Ui::BTN_TINT }}">Reset password</button>
+                                            <button type="button" wire:click="resetTwoFactor({{ $u->id }})" class="{{ Ui::BTN_TINT }}">Reset two-factor</button>
+                                            <button type="button" wire:click="deactivate({{ $u->id }})" class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1.5 rounded-lg">Deactivate</button>
+                                        @else
+                                            <button type="button" wire:click="reactivate({{ $u->id }})" class="{{ Ui::BTN_TINT }}">Reactivate</button>
+                                        @endif
+                                    </div>
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        @endif
+    </x-ui.card>
+
+    <x-ui.card title="Regional Coordinators" icon="fa-map-location-dot" :count="$coordinators->where('is_active', true)->count().' active'">
+        <x-slot:actions>
+            @can('staff.directory')
+                <a href="{{ route('staff.index') }}" wire:navigate class="{{ Ui::BTN_TINT }}"><i class="fa-solid fa-id-badge text-[9px]"></i>Appoint from the staff list</a>
+            @endcan
+        </x-slot:actions>
+        @if ($coordinators->isEmpty())
+            <x-ui.empty icon="fa-map-location-dot" title="No Regional Coordinator accounts" line="A Regional Coordinator prepares their region's workplan and its memos. Appoint one per region from the staff list (Position or access): their duty station gives the region." class="!py-8" />
+        @else
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="border-b border-slate-100"><tr>
+                        <th class="{{ Ui::TH }}">Name</th><th class="{{ Ui::TH }}">Region</th><th class="{{ Ui::TH }}">Department</th><th class="{{ Ui::TH }}">Last sign-in</th><th class="{{ Ui::TH }}"><span class="sr-only">Actions</span></th>
+                    </tr></thead>
+                    <tbody class="divide-y divide-slate-100">
+                        @foreach ($coordinators as $u)
+                            <tr wire:key="rc-{{ $u->id }}" class="{{ $u->is_active ? '' : 'opacity-60' }}">
+                                <td class="{{ Ui::TD }}"><p class="font-semibold text-slate-700">{{ $u->name }}</p><p class="text-[12px] text-slate-400">{{ $u->email }}</p><p class="text-[12px] text-slate-400 font-numeric">{{ $u->mobileNumber() ?? 'No mobile number: no SMS' }}</p></td>
+                                <td class="{{ Ui::TD }}">{{ $u->region?->name ?? 'Not linked' }}</td>
+                                <td class="{{ Ui::TD }}">{{ $u->department?->name ?? 'Not linked' }}</td>
+                                <td class="{{ Ui::TD }} font-numeric whitespace-nowrap">{{ $u->last_login_at?->format('d M Y H:i') ?? 'never' }}</td>
+                                <td class="{{ Ui::TD }}">
+                                    <div class="flex flex-wrap justify-end gap-1.5">
+                                        @if ($u->is_active)
+                                            @if ($u->isLocked())<button type="button" wire:click="unlock({{ $u->id }})" class="{{ Ui::BTN_TINT }}">Unlock</button>@endif
+                                            <button type="button" wire:click="openContact({{ $u->id }})" class="{{ Ui::BTN_TINT }}">Contact</button>
+                                            <button type="button" wire:click="sendPasswordLink({{ $u->id }})" wire:loading.attr="disabled" wire:target="sendPasswordLink({{ $u->id }})" class="{{ Ui::BTN_TINT }}">Email password link</button>
                                             <button type="button" wire:click="resetTwoFactor({{ $u->id }})" class="{{ Ui::BTN_TINT }}">Reset two-factor</button>
                                             <button type="button" wire:click="deactivate({{ $u->id }})" class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1.5 rounded-lg">Deactivate</button>
                                         @else

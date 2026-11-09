@@ -7,7 +7,7 @@
     $filters = ['' => ['All departments', null], BudgetStatus::Submitted->value => [BudgetStatus::Submitted->label(), $statusCounts[BudgetStatus::Submitted->value]], BudgetStatus::Returned->value => [BudgetStatus::Returned->label(), $statusCounts[BudgetStatus::Returned->value]], BudgetStatus::Draft->value => ['Drafts', $statusCounts[BudgetStatus::Draft->value]], BudgetStatus::Approved->value => ['Approved', $statusCounts[BudgetStatus::Approved->value]], 'none' => ['No budget yet', $withoutBudget]];
 @endphp
 
-<x-ui.page icon="fa-wallet" :title="$ownDepartment ? 'Workplan and budget' : 'Department budgets'" :subtitle="$ownDepartment ? 'Your department\'s workplan and budget estimates for the year. Prepare it, submit it to the CEO, and follow the review here. It becomes your approved budget only when the CEO approves it.' : 'Each department\'s workplan and budget for the year. Prepared as a draft by the department\'s Head or the Office of the CEO; counts only once the CEO approves it. Changes during the year are adjustments.'" statsKey="budgetStats">
+<x-ui.page icon="fa-wallet" :title="$ownRegion ? 'Regional workplan' : ($ownDepartment ? 'Workplan and budget' : 'Department budgets')" :subtitle="$ownRegion ? 'Your region\'s workplan and budget for the year. Prepare it, submit it to the CEO, and follow the review here. Once the CEO approves it, your memos are prepared from its activities.' : ($ownDepartment ? 'Your department\'s workplan and budget estimates for the year. Prepare it, submit it to the CEO, and follow the review here. It becomes your approved budget only when the CEO approves it.' : 'Each department\'s workplan and budget for the year. Prepared as a draft by the department\'s Head or the Office of the CEO; counts only once the CEO approves it. Changes during the year are adjustments. Regions\' workplans are listed after the departments.')" statsKey="budgetStats">
     <x-slot:actions>
         <div class="w-40 shrink-0"><select wire:model.live="fy" class="{{ $sel }}" aria-label="Financial year">@foreach ($years as $y)<option value="{{ $y }}">FY {{ $y }}</option>@endforeach</select></div>
         <a href="{{ route('budgets.template') }}" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-file-excel text-xs text-emerald-700"></i>Workplan template</a>
@@ -43,25 +43,26 @@
 
     <section class="{{ Ui::CARD }}">
         @if ($rows->isEmpty())
-            <x-ui.empty icon="fa-wallet" title="No departments match" line="Choose another status or financial year." />
+             <x-ui.empty icon="fa-wallet" :title="$ownRegion ? 'No workplan yet' : 'No departments match'" line="Choose another status or financial year." />
         @else
             <div class="overflow-x-auto">
                 <table class="w-full">
                     <thead class="border-b border-slate-100"><tr>
-                        <th class="{{ Ui::TH }}">Department</th><th class="{{ Ui::TH }}">Status</th>
+                        <th class="{{ Ui::TH }}">{{ $office ? 'Department or region' : ($ownRegion ? 'Region' : 'Department') }}</th><th class="{{ Ui::TH }}">Status</th>
                         <th class="{{ Ui::TH }} text-right">As approved</th><th class="{{ Ui::TH }} text-right">Adjustments</th><th class="{{ Ui::TH }} text-right">Allocation now</th>
                         <th class="{{ Ui::TH }} text-right">Spent</th><th class="{{ Ui::TH }} text-right">Committed</th><th class="{{ Ui::TH }} text-right">Balance</th>
                     </tr></thead>
                     <tbody class="divide-y divide-slate-100">
                         @foreach ($rows as $r)
                             @php $b = $r['budget']; $p = $r['position']; $approved = $b?->status === BudgetStatus::Approved; @endphp
-                            <tr wire:key="d-{{ $r['department']->id }}" class="hover:bg-slate-50/60">
+                            <tr wire:key="{{ $r['key'] }}" class="hover:bg-slate-50/60">
                                 <td class="{{ Ui::TD }}">
                                     @if ($b)
-                                        <a href="{{ route('budgets.show', $b) }}" wire:navigate class="font-semibold text-emerald-700 hover:underline">{{ $r['department']->name }}</a>
+                                        <a href="{{ route('budgets.show', $b) }}" wire:navigate class="font-semibold text-emerald-700 hover:underline">{{ $r['name'] }}</a>
                                     @else
-                                        <p class="font-semibold text-slate-700">{{ $r['department']->name }}</p>
+                                        <p class="font-semibold text-slate-700">{{ $r['name'] }}</p>
                                     @endif
+                                    @if ($r['region'])<p class="text-[11px] text-slate-400">Regional workplan{{ $r['department'] ? ' · under '.$r['department']->name : '' }}</p>@endif
                                     @if ($b)<p class="text-[11px] text-slate-400">{{ $b->lines_count }} {{ Str::plural('line', $b->lines_count) }}@if (! $approved && $b->preparer) · prepared by {{ $b->preparer->name }}@endif</p>@endif
                                 </td>
                                 <td class="{{ Ui::TD }}">
@@ -75,7 +76,7 @@
                                             @endif
                                         </div>
                                     @else
-                                        <div class="flex items-center gap-1.5"><x-ui.badge>No budget</x-ui.badge>@if ($canPrepare)<button type="button" wire:click="openPrepare({{ $r['department']->id }})" class="{{ Ui::BTN_TINT }}"><i class="fa-solid fa-plus text-[9px]"></i>Prepare or import</button>@endif</div>
+                                        <div class="flex items-center gap-1.5"><x-ui.badge>No budget</x-ui.badge>@if ($canPrepare)<button type="button" wire:click="{{ $r['region'] ? 'openPrepare(null, '.$r['region']->id.')' : 'openPrepare('.$r['department']->id.')' }}" class="{{ Ui::BTN_TINT }}"><i class="fa-solid fa-plus text-[9px]"></i>Prepare or import</button>@endif</div>
                                     @endif
                                 </td>
                                 @if ($b)
@@ -100,9 +101,12 @@
     </section>
     <p class="text-[12px] text-slate-400">Spent and committed are from activities in the year whether or not the department has an approved budget. A draft or a budget awaiting approval counts for nothing until the CEO approves it.</p>
 
-    <x-ui.modal show="showPrepare" :open="$showPrepare" size="slim" icon="fa-wallet" :title="$ownDepartment ? 'Prepare your workplan and budget' : 'Prepare a department budget'" subtitle="It starts as a draft. Add its activities and their costs, typed in or from the workplan template, then submit it to the CEO for approval.">
+    <x-ui.modal show="showPrepare" :open="$showPrepare" size="slim" icon="fa-wallet" :title="$prepareRegion !== '' ? 'Prepare the regional workplan' : ($ownDepartment ? 'Prepare your workplan and budget' : 'Prepare a department budget')" subtitle="It starts as a draft. Add its activities and their costs, typed in or from the workplan template, then submit it to the CEO for approval.">
+        @if ($prepareRegion !== '')
+            <div><p class="{{ Ui::LABEL }}">Region</p><p class="text-sm font-semibold text-slate-700">{{ $regions->firstWhere('id', (int) $prepareRegion)?->name }}</p><p class="text-[11px] text-slate-400">The region's workplan, under its Regional Coordinator's department.</p></div>
+        @endif
         <x-ui.field label="Department" for="p-d" error="prepareDepartment" required>
-            <select id="p-d" wire:model="prepareDepartment" class="{{ $sel }}" @disabled($ownDepartment)><option value="">Choose…</option>@foreach ($departments as $d)<option value="{{ $d->id }}">{{ $d->name }}</option>@endforeach</select>
+            <select id="p-d" wire:model="prepareDepartment" class="{{ $sel }}" @disabled($ownDepartment || $prepareRegion !== '')><option value="">Choose…</option>@foreach ($departments as $d)<option value="{{ $d->id }}">{{ $d->name }}</option>@endforeach</select>
         </x-ui.field>
         <x-ui.field label="Financial year" for="p-y" error="prepareYear" required>
             <select id="p-y" wire:model="prepareYear" class="{{ $sel }}">@foreach ($years as $y)<option value="{{ $y }}">FY {{ $y }}</option>@endforeach</select>

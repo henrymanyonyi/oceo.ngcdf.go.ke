@@ -24,7 +24,7 @@ use Throwable;
 class OutboundAlerts
 {
     /** The roles that get email and SMS. */
-    public const ROLES = [User::ROLE_CEO, User::ROLE_HOD, User::ROLE_CHIEF_OF_STAFF, User::ROLE_ASSISTANT_CHIEF_OF_STAFF];
+    public const ROLES = [User::ROLE_CEO, User::ROLE_HOD, User::ROLE_RC, User::ROLE_CHIEF_OF_STAFF, User::ROLE_ASSISTANT_CHIEF_OF_STAFF];
 
     public function __construct(private AppSettings $settings) {}
 

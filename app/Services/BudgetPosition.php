@@ -7,6 +7,7 @@ use App\Models\Activity;
 use App\Models\ActivityCost;
 use App\Models\Department;
 use App\Models\DepartmentBudget;
+use App\Models\Region;
 use App\Support\FinancialYear;
 use App\Support\Money;
 use Illuminate\Database\Eloquent\Builder;
@@ -48,10 +49,13 @@ class BudgetPosition
      *
      * @return Collection<int, array<string, mixed>>
      */
-    public function forYear(FinancialYear $fy, ?int $departmentId = null): Collection
+    public function forYear(FinancialYear $fy, ?int $departmentId = null, bool $includeRegional = true): Collection
     {
-        $activities = $this->activities($fy, $departmentId);
-        $allocations = $this->allocations($fy, $departmentId);
+        // Board-wide, a region's money counts under its coordinator's department; a department's own row
+        // (a Head of Department's view, the budgets table) leaves its regions out (they have forRegions()).
+        $regional = $includeRegional ? null : false;
+        $activities = $this->activities($fy, $departmentId, $regional);
+        $allocations = $this->allocations($fy, $departmentId, $regional);
 
         $departmentIds = $allocations->keys()->merge($activities->pluck('organising_department_id')->map(fn ($id) => (int) $id))->unique();
         $departments = Department::query()->whereIn('id', $departmentIds->filter())->get()->keyBy('id');
@@ -103,7 +107,34 @@ class BudgetPosition
      */
     public function forDepartment(FinancialYear $fy, int $departmentId): array
     {
-        return ($this->forYear($fy, $departmentId)->first() ?? $this->row(Department::query()->find($departmentId), null, new EloquentCollection))
+        return ($this->forYear($fy, $departmentId, includeRegional: false)->first() ?? $this->row(Department::query()->find($departmentId), null, new EloquentCollection))
+            + ['financial_year' => $fy->label()];
+    }
+
+    /**
+     * One row per region with a workplan or a memo in the year (or only the given region), keyed
+     * like forYear() rows plus 'region'. What a Regional Coordinator sees of their own region.
+     *
+     * @return Collection<int, array<string, mixed>>
+     */
+    public function forRegions(FinancialYear $fy, ?int $regionId = null): Collection
+    {
+        $activities = $this->activities($fy, null, true, $regionId);
+        $allocations = DepartmentBudget::query()->approved()->where('financial_year', $fy->label())->whereNotNull('region_id')
+            ->when($regionId, fn (Builder $q, $id) => $q->where('region_id', $id))->get()
+            ->groupBy(fn (DepartmentBudget $b) => (int) $b->region_id)
+            ->map(fn ($budgets) => (int) $budgets->sum(fn (DepartmentBudget $b) => $this->budgeting->totals($b)['current']));
+        $ids = $allocations->keys()->merge($activities->pluck('originating_region_id')->map(fn ($id) => (int) $id))->unique();
+        $regions = Region::query()->whereIn('id', $ids)->get()->keyBy('id');
+
+        return $ids->map(fn (int $id) => ['region' => $regions->get($id)] + $this->row(null, $allocations->get($id), $activities->filter(fn (Activity $a) => (int) $a->originating_region_id === $id)))
+            ->sortBy(fn (array $r) => $r['region']?->name ?? '~')->values();
+    }
+
+    /** @return array<string, mixed> one region's row, empty figures when it has neither a workplan nor memos */
+    public function forRegion(FinancialYear $fy, int $regionId): array
+    {
+        return ($this->forRegions($fy, $regionId)->first() ?? ['region' => Region::query()->find($regionId)] + $this->row(null, null, new EloquentCollection))
             + ['financial_year' => $fy->label()];
     }
 
@@ -116,8 +147,11 @@ class BudgetPosition
     public function forActivity(Activity $activity): array
     {
         $fy = FinancialYear::for($activity->start_date);
-        $row = $this->forYear($fy, $activity->organising_department_id)->first()
-            ?? $this->row($activity->organisingDepartment, null, new EloquentCollection);
+        // The memo's own unit: its region's workplan, or its department's own budget.
+        $row = $activity->originating_region_id
+            ? $this->forRegion($fy, $activity->originating_region_id)
+            : ($this->forYear($fy, $activity->organising_department_id, includeRegional: false)->first()
+                ?? $this->row($activity->organisingDepartment, null, new EloquentCollection));
 
         // Already counted when approved or later; otherwise this is the request being decided.
         $counted = $activity->status->isApprovedOrLater();
@@ -140,9 +174,9 @@ class BudgetPosition
      *
      * @return array{approved: Collection<int, array<string, mixed>>, pending: Collection<int, array<string, mixed>>, cancelled: Collection<int, array<string, mixed>>}
      */
-    public function detail(FinancialYear $fy, int $departmentId): array
+    public function detail(FinancialYear $fy, int $departmentId, ?int $regionId = null): array
     {
-        $activities = $this->activities($fy, $departmentId);
+        $activities = $regionId ? $this->activities($fy, null, true, $regionId) : $this->activities($fy, $departmentId);
 
         $money = fn (Activity $a) => [
             'activity' => $a,
@@ -215,23 +249,28 @@ class BudgetPosition
     }
 
     /** @return EloquentCollection<int, Activity> */
-    private function activities(FinancialYear $fy, ?int $departmentId): EloquentCollection
+    /** $regional: null for all, false for departments' own memos only, true for regional memos (of $regionId if given). */
+    private function activities(FinancialYear $fy, ?int $departmentId, ?bool $regional = null, ?int $regionId = null): EloquentCollection
     {
         return Activity::query()
             ->whereBetween('start_date', [$fy->start()->toDateString(), $fy->end()->toDateString()])
             ->status(...$this->tracker->approvedStatuses(), ...$this->pendingStatuses(), ...[ActivityStatus::Cancelled])
             ->when($departmentId, fn (Builder $q, $id) => $q->where('organising_department_id', $id))
+            ->when($regional === false, fn (Builder $q) => $q->whereNull('originating_region_id'))
+            ->when($regional === true, fn (Builder $q) => $q->whereNotNull('originating_region_id'))
+            ->when($regionId, fn (Builder $q, $id) => $q->where('originating_region_id', $id))
             ->with(['costs:id,activity_id,estimated_amount,actual_amount', 'organisingDepartment'])
             ->orderBy('start_date')
             ->get();
     }
 
     /** @return Collection<int, int> department id => allocation in cents */
-    private function allocations(FinancialYear $fy, ?int $departmentId): Collection
+    private function allocations(FinancialYear $fy, ?int $departmentId, ?bool $regional = null): Collection
     {
         return DepartmentBudget::query()->approved()
             ->where('financial_year', $fy->label())
             ->when($departmentId, fn (Builder $q, $id) => $q->where('department_id', $id))
+            ->when($regional === false, fn (Builder $q) => $q->whereNull('region_id'))
             ->get()
             ->groupBy(fn (DepartmentBudget $b) => (int) $b->department_id)
             ->map(fn ($budgets) => (int) $budgets->sum(fn (DepartmentBudget $b) => $this->budgeting->totals($b)['current']));
