@@ -1,4 +1,8 @@
-# Deployment: staff directory privacy (9 November 2026)
+# Deployment: staff directory privacy (9 November 2026, revised 10 November 2026)
+
+**Revised 10 November 2026:** only the CEO and the System Administrator open the staff list. Heads of Department, Regional Coordinators, the Chief of Staff and the Assistant no longer have it in their menu (and are refused at the address). They add a missing officer, or import a list of them, from **Add officers** on a memo's or activity's team: "Officer not on the list? Add an officer / Import a list". That import only adds officers who are missing and never changes or deactivates anyone already on the list. Position and access changes are made by the CEO or the System Administrator. Re-run `RolesAndPermissionsSeeder` (the Chief of Staff, the Assistant and Regional Coordinators get `staff.add`).
+
+The table below describes the first version (9 November); the staff list rows for the Chief of Staff, the Assistant and Heads no longer apply.
 
 ## What changes
 
