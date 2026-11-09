@@ -4,6 +4,7 @@ use App\Enums\EmploymentType;
 use App\Livewire\StaffList;
 use App\Models\Department;
 use App\Models\Staff;
+use App\Models\User;
 use App\Services\StaffImporter;
 use Illuminate\Http\UploadedFile;
 use Livewire\Livewire;
@@ -135,7 +136,7 @@ it('checks a file without saving anything', function () {
 });
 
 it('shows on screen what a checked file would do', function () {
-    Livewire::actingAs(chiefOfStaff())->test(StaffList::class)
+    Livewire::actingAs(User::factory()->admin()->create())->test(StaffList::class)
         ->set('showImport', true)
         ->set('file', UploadedFile::fake()->createWithContent('staff.csv', "PF Number,Name,Employment Type\n,New Casual,Casual\n"))
         ->call('checkImport')
@@ -148,7 +149,7 @@ it('shows on screen what a checked file would do', function () {
 it('requires a PF number on screen only for permanent staff', function () {
     $ict = Department::query()->where('name', 'ICT')->value('id');
 
-    Livewire::actingAs(chiefOfStaff())->test(StaffList::class)
+    Livewire::actingAs(User::factory()->admin()->create())->test(StaffList::class)
         ->call('edit')
         ->set(['name' => 'Permanent Officer', 'form_department_id' => (string) $ict, 'employment_type' => 'permanent'])
         ->call('save')
@@ -215,7 +216,7 @@ it('puts every casual on DSA scale 10, including one recorded earlier on INTERN,
 it('puts a casual added on screen on scale 10 and an attachee on INTERN, and refuses INTERN for permanent staff and another scale for a casual', function () {
     $ict = Department::query()->where('name', 'ICT')->value('id');
 
-    Livewire::actingAs(chiefOfStaff())->test(StaffList::class)
+    Livewire::actingAs(User::factory()->admin()->create())->test(StaffList::class)
         ->call('edit')
         ->set(['staff_number' => 'PF900', 'name' => 'Permanent Officer', 'form_department_id' => (string) $ict, 'employment_type' => 'permanent', 'job_grade' => 'INTERN'])
         ->call('save')

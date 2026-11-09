@@ -93,7 +93,9 @@ Route::middleware(['auth:sanctum', config('jetstream.auth_session'), 'verified',
     });
 
     Route::get('/links', Livewire\Links::class)->middleware('permission:links.manage')->name('links.index');
-    Route::get('/staff', Livewire\StaffList::class)->middleware('permission:reference.manage|staff.add|staff.reassign')->name('staff.index');
+    // The staff list: the CEO and the System Administrator only (November 2026). Everyone else adds or imports a
+    // missing officer from a memo's team (App\Livewire\Concerns\AddsMissingOfficers).
+    Route::get('/staff', Livewire\StaffList::class)->middleware('permission:staff.directory')->name('staff.index');
     Route::get('/settings', Livewire\Settings\Reference::class)->middleware('permission:reference.manage')->name('settings.reference');
     Route::get('/users', Livewire\Users::class)->middleware('permission:users.manage')->name('users.index');
     Route::get('/audit', fn () => redirect()->route('reports.show', 'access-audit'))->middleware('permission:audit.view')->name('audit.index');

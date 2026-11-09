@@ -36,13 +36,13 @@ class RolesAndPermissionsSeeder extends Seeder
         'audit.view' => 'View audit trail and access log',
         'memos.originate' => 'Prepare and submit memos for their own department (Head of Department)',
         'memos.review' => 'Review memos, comment, return them for correction and forward them',
-        'staff.add' => 'See the staff list and add officers who are missing (correct only those they added)',
+        'staff.add' => 'Add or import officers missing from the staff list while building a team (correct only those they added)',
         'budgets.prepare' => 'Prepare department budgets and adjustments as drafts and submit them to the CEO',
         'budgets.approve' => 'Approve department budgets and adjustments, or return them for correction',
         'instructions.send' => 'Instruct Finance (imprest) and Procurement (tickets) to act on an approved memo',
         'instructions.action' => 'Acknowledge and complete the CEO\'s instructions addressed to their own department',
         'workplans.prepare' => 'Prepare their own department\'s workplan and budget estimates and submit them to the CEO',
-        'staff.directory' => 'See the full staff directory (every officer, searchable by email); others see only the officers their work needs',
+        'staff.directory' => 'Open the staff list: every officer, searchable by email, with import, corrections and position or access changes',
         'compliance.override' => 'Allow one memo to be submitted while its department has overdue activity reports, with a reason',
         'staff.reassign' => 'Change an officer\'s department, designation or system access (promotion, transfer), with a reason',
     ];
@@ -63,11 +63,11 @@ class RolesAndPermissionsSeeder extends Seeder
             'activities.view', 'activities.manage', 'activities.submit', 'decisions.record', 'directives.manage',
             'activities.postpone', 'activities.cancel', 'activities.execute', 'activities.close',
             'reference.manage', 'links.manage', 'reports.export', 'users.manage', 'audit.view',
-            'memos.review', 'budgets.prepare', 'staff.reassign',
+            'memos.review', 'budgets.prepare', 'staff.reassign', 'staff.add',
         ],
         User::ROLE_ASSISTANT_CHIEF_OF_STAFF => [
             'activities.view', 'activities.manage', 'activities.submit', 'activities.postpone', 'activities.execute',
-            'memos.review', 'budgets.prepare', 'staff.reassign',
+            'memos.review', 'budgets.prepare', 'staff.reassign', 'staff.add',
         ],
         // Settings, configuration and logs; no activities.view, so no activity, dashboard or report
         // other than the access and audit log (CEO's approval, 11 October 2026).
@@ -78,6 +78,7 @@ class RolesAndPermissionsSeeder extends Seeder
         // CEO's decision. No activities.view, so no register, dashboard, calendar or report.
         // instructions.action: the Heads of Finance and Procurement receive the CEO's instructions on
         // approved memos (instruction sheet only, never the memo; App\Models\ActionInstruction::scopeFor).
+        // staff.add: a missing officer is added or imported from the memo's team; only staff.directory opens the staff list.
         // workplans.prepare: their own department's workplan and budget estimates only (App\Services\Budgeting).
         User::ROLE_HOD => [
             'memos.originate', 'staff.add', 'instructions.action', 'workplans.prepare',
@@ -85,7 +86,7 @@ class RolesAndPermissionsSeeder extends Seeder
         // Their own region's memos and workplan only (November 2026, CEO's approval): prepared from the region's
         // approved workplan and sent along the same routes as a Head's. No activities.view, no staff list.
         User::ROLE_RC => [
-            'memos.originate', 'workplans.prepare',
+            'memos.originate', 'workplans.prepare', 'staff.add',
         ],
     ];
 

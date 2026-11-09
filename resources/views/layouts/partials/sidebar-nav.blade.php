@@ -37,7 +37,6 @@
             ['route' => 'memos.index', 'match' => 'memos.*', 'icon' => 'fa-envelope-open-text', 'label' => 'Activity memos', 'can' => ['memos.originate', 'memos.review'], 'count' => $memoActions],
             ['route' => 'instructions.index', 'match' => 'instructions.*', 'icon' => 'fa-clipboard-check', 'label' => 'Instructions', 'can' => 'instructions.action', 'hidden' => ! $receivesInstructions, 'count' => $openInstructions],
             // A Head of Department's own entry; the Office of the CEO finds the staff list under its section below.
-            ['route' => 'staff.index', 'match' => 'staff.*', 'icon' => 'fa-id-badge', 'label' => 'Staff list', 'can' => 'staff.add', 'hidden' => $officeView],
             ['route' => 'decisions.index', 'match' => 'decisions.*', 'icon' => 'fa-gavel', 'label' => 'Decision queue', 'can' => 'activities.view', 'count' => $awaiting],
             ['route' => 'activities.index', 'match' => 'activities.*', 'icon' => 'fa-table-list', 'label' => 'Activity register', 'can' => 'activities.view', 'count' => $user->can('activities.submit') ? $drafts : 0],
             ['route' => 'calendar', 'match' => 'calendar', 'icon' => 'fa-calendar-days', 'label' => 'Calendar', 'can' => 'activities.view'],
@@ -56,7 +55,7 @@
         ],
         'Office of the CEO' => [
             ['route' => 'links.index', 'match' => 'links.*', 'icon' => 'fa-link', 'label' => 'Submission links', 'can' => 'links.manage', 'hidden' => ! config('activities.submission_links')],
-            ['route' => 'staff.index', 'match' => 'staff.*', 'icon' => 'fa-id-badge', 'label' => 'Staff list', 'can' => ['reference.manage', 'staff.reassign']],
+            ['route' => 'staff.index', 'match' => 'staff.*', 'icon' => 'fa-id-badge', 'label' => 'Staff list', 'can' => 'staff.directory'],
             ['route' => 'settings.reference', 'match' => 'settings.*', 'icon' => 'fa-sliders', 'label' => 'Reference data', 'can' => 'reference.manage'],
             ['route' => 'users.index', 'match' => 'users.*', 'icon' => 'fa-users-gear', 'label' => 'User accounts', 'can' => 'users.manage'],
             ['route' => 'audit.index', 'match' => 'audit.*', 'icon' => 'fa-clock-rotate-left', 'label' => 'Audit and access log', 'can' => 'audit.view'],

@@ -12,11 +12,8 @@ use Illuminate\Database\Eloquent\Builder;
  *
  *  - The full directory, browsable and searchable by email: the CEO and the System Administrator
  *    (`staff.directory`), who maintain the HR register.
- *  - A Head of Department: their own department, and the officers they added themselves. To put
- *    someone from another department on a team they search by name or PF number; they never browse
- *    another department.
- *  - The Chief of Staff and the Assistant: no browsing; they find an officer by name or PF number
- *    for the work in hand (teams, position and access changes).
+ *  - Everyone else, in a team picker: search first, by name or PF number (forPicker()); nobody is
+ *    listed before they type. The Office of the CEO may also list a department or duty station it chooses.
  *  - A delegated officer preparing a memo (no account): search by name or PF number only.
  */
 class StaffVisibility
@@ -51,7 +48,7 @@ class StaffVisibility
         $this->searchNameOrNumber($query, $term);
 
         if ($this->isUnitScoped($user)) {
-            return $query->where(fn (Builder $q) => $q->where('department_id', $user->department_id ?? 0)->orWhere('created_by', $user->id));
+            return $query->where(fn (Builder $q) => $this->ownUnit($q, $user)->orWhere('created_by', $user->id));
         }
 
         // Search only: nothing is listed until a name or PF number is typed.
@@ -65,30 +62,36 @@ class StaffVisibility
     }
 
     /**
-     * Choosing officers for a team or a delegated memo. Without a search the user sees only their own
-     * unit (everyone for the Office of the CEO's team building); with a name or PF number, any active officer.
+     * Choosing officers for a team, a delegated memo or an account: search first (10 November 2026).
+     * Nobody is listed until at least two letters of a name or PF number are typed; then any active
+     * officer who matches. Only the CEO and the System Administrator also match by email. $browse lets
+     * the Office of the CEO list a department or duty station it has chosen on purpose.
      *
      * @param  Builder<Staff>  $query
      * @return Builder<Staff>
      */
-    public function forPicker(Builder $query, ?User $user, ?string $search): Builder
+    public function forPicker(Builder $query, ?User $user, ?string $search, bool $browse = false): Builder
     {
         $term = trim((string) $search);
 
-        if ($this->seesDirectory($user)) {
-            return $query->search($term);
-        }
+        $this->seesDirectory($user) ? $query->search($term) : $this->searchNameOrNumber($query, $term);
 
-        $this->searchNameOrNumber($query, $term);
+        return mb_strlen($term) >= self::MIN_SEARCH || ($browse && $user?->can('activities.view'))
+            ? $query
+            : $query->whereRaw('1 = 0');
+    }
 
-        if (mb_strlen($term) >= self::MIN_SEARCH) {
-            return $query;
-        }
-        if ($user?->can('activities.view')) {
-            return $query;
-        }
-
-        return $this->isUnitScoped($user) ? $query->where('department_id', $user->department_id ?? 0) : $query->whereRaw('1 = 0');
+    /**
+     * A Head's department, or a Regional Coordinator's region (the officers at its duty stations).
+     *
+     * @param  Builder<Staff>  $query
+     * @return Builder<Staff>
+     */
+    private function ownUnit(Builder $query, User $user): Builder
+    {
+        return $user->isRegionalCoordinator()
+            ? $query->whereHas('office', fn (Builder $o) => $o->where('region_id', $user->region_id ?? 0))
+            : $query->where('department_id', $user->department_id ?? 0);
     }
 
     /**

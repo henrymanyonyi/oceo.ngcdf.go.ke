@@ -128,6 +128,12 @@ class StaffList extends Component
         }
     }
 
+    /** Only the CEO and the System Administrator open the staff list (November 2026); checked here too, not only on the route. */
+    public function mount(): void
+    {
+        abort_unless(Auth::user()->can('staff.directory'), 403);
+    }
+
     public function edit(?int $id = null): void
     {
         $this->resetErrorBag();

@@ -151,7 +151,7 @@ it('imports the HR staff list and updates by PF number (MD-01)', function () {
     $csv = "PF Number,Name,Designation,Job Grade,Department,Duty Station,Email,Phone,Active\nPF001,New Name,Officer,6,ICT,Headquarters,,,Yes\nPF002,Second Person,Clerk,8,Supply Chain,Headquarters,,,Yes\n";
     $file = UploadedFile::fake()->createWithContent('staff.csv', $csv);
 
-    Livewire::actingAs($cos)->test(StaffList::class)->set('file', $file)->call('import')->assertHasNoErrors()->assertSet('importErrors', []);
+    Livewire::actingAs(ceo())->test(StaffList::class)->set('file', $file)->call('import')->assertHasNoErrors()->assertSet('importErrors', []);
 
     expect(Staff::where('staff_number', 'PF001')->value('name'))->toBe('New Name')
         ->and(Staff::where('staff_number', 'PF002')->value('job_grade'))->toBe('8');

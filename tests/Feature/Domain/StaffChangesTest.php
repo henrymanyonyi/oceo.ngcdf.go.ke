@@ -95,9 +95,8 @@ it('lets only authorised officers change positions, and only users.manage holder
 });
 
 it('records a change from the staff list screen and shows the one-time password once', function () {
-    // The Assistant finds the officer by name (no browsing the full directory, November 2026).
-    Livewire::actingAs(assistant())->test(StaffList::class)
-        ->assertDontSee('Asha Promoted')
+    // The staff list is the CEO's and the System Administrator's (November 2026).
+    Livewire::actingAs(ceo())->test(StaffList::class)
         ->set('search', 'Asha')
         ->assertSee('Change Asha Promoted\'s position or access', false)
         ->call('openPosition', $this->officer->id)
@@ -108,8 +107,8 @@ it('records a change from the staff list screen and shows the one-time password 
         ->call('savePosition')->assertHasNoErrors()
         ->assertSee('One-time password for asha.promoted@ngcdf.go.ke');
 
-    Livewire::actingAs(headOfDepartment($this->audit))->test(StaffList::class)->assertDontSee('position or access');
-    Livewire::actingAs(headOfDepartment($this->ict))->test(StaffList::class)->call('openPosition', $this->officer->id)->assertForbidden();
+    Livewire::actingAs(headOfDepartment($this->audit))->test(StaffList::class)->assertForbidden();
+    Livewire::actingAs(assistant())->test(StaffList::class)->assertForbidden();
 });
 
 it('emails a newly promoted Head a link to set their own password, with which they sign in and reach their memos', function () {
@@ -154,7 +153,7 @@ it('ends the officer\'s place as Manager of the department they leave', function
 });
 
 it('says so when the department has no Head to replace, and names the account the officer will get', function () {
-    Livewire::actingAs(assistant())->test(StaffList::class)
+    Livewire::actingAs(ceo())->test(StaffList::class)
         ->call('openPosition', $this->officer->id)
         ->set('posDepartment', (string) $this->audit->id)->set('posAccess', User::ROLE_HOD)
         ->assertSee('Internal Audit has no active Head of Department now')
@@ -242,7 +241,7 @@ it('offers a successor when ending a Head\'s role from the staff list, and sched
     $head->update(['staff_id' => $headStaff->id]);
     $successor = Staff::factory()->create(['name' => 'Next Head', 'email' => 'next.head@ngcdf.go.ke', 'department_id' => $this->ict->id]);
 
-    Livewire::actingAs(assistant())->test(StaffList::class)
+    Livewire::actingAs(ceo())->test(StaffList::class)
         ->call('openPosition', $headStaff->id)
         ->assertDontSee('Successor as Head of ICT')
         ->set('posAccess', StaffChanges::NONE)
@@ -262,7 +261,7 @@ it('says an officer who already heads the department is its Head, not that the d
     $hod->update(['staff_id' => $this->officer->id]);
     $this->officer->update(['department_id' => $this->ict->id]);
 
-    Livewire::actingAs(assistant())->test(StaffList::class)
+    Livewire::actingAs(ceo())->test(StaffList::class)
         ->call('openPosition', $this->officer->id)
         ->set('posAccess', User::ROLE_HOD)
         ->assertSee('Asha Promoted is already the Head of ICT')
@@ -277,7 +276,7 @@ it('hands a placeholder Head account linked to the officer over to them, with th
     DB::table('sessions')->insert(['id' => 'placeholder', 'user_id' => $placeholder->id, 'payload' => '', 'last_activity' => time()]);
     $this->officer->update(['department_id' => $this->ict->id]);
 
-    Livewire::actingAs(assistant())->test(StaffList::class)
+    Livewire::actingAs(ceo())->test(StaffList::class)
         ->call('openPosition', $this->officer->id)->set('posAccess', User::ROLE_HOD)
         ->assertSee('The account linked to Asha Promoted is', false)->assertSee('hod.ict@ngcdf.go.ke');
 
