@@ -31,7 +31,7 @@ beforeEach(function () {
 });
 
 it('shows the Head of Department the staff list in their menu, with import but without activity counts', function () {
-    Staff::factory()->create(['name' => 'Grace Wanjiru']);
+    Staff::factory()->create(['name' => 'Grace Wanjiru', 'department_id' => $this->ict->id]);
 
     $this->actingAs($this->hod)->get(route('memos.index'))->assertSee(route('staff.index'));
     $this->actingAs($this->hod)->get(route('staff.index'))->assertOk()

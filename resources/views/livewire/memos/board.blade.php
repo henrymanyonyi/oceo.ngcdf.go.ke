@@ -164,7 +164,7 @@
                 <p class="text-[11px] mt-1">It works only for them: it asks for a code sent to their email or mobile.</p>
             </div>
         @else
-            <x-ui.field label="Officer" for="rq-s" error="requestStaffId" required hint="Search the staff list by name or PF number. Officers of your department come first.">
+            <x-ui.field label="Officer" for="rq-s" error="requestStaffId" required hint="Search your department's officers by name or PF number.">
                 @if ($requestPicked)
                     <div class="flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
                         <p class="text-[13px]"><span class="font-semibold text-slate-800">{{ $requestPicked->name }}</span> <span class="text-slate-500">· {{ $requestPicked->department?->name ?? 'No department' }}</span><span class="block text-[11px] text-slate-500">{{ $requestPicked->email ?: 'No email' }} · {{ $requestPicked->phone ?: 'No mobile' }}</span></p>

@@ -95,7 +95,10 @@ it('lets only authorised officers change positions, and only users.manage holder
 });
 
 it('records a change from the staff list screen and shows the one-time password once', function () {
+    // The Assistant finds the officer by name (no browsing the full directory, November 2026).
     Livewire::actingAs(assistant())->test(StaffList::class)
+        ->assertDontSee('Asha Promoted')
+        ->set('search', 'Asha')
         ->assertSee('Change Asha Promoted\'s position or access', false)
         ->call('openPosition', $this->officer->id)
         ->assertSee('No account')

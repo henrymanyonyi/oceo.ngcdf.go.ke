@@ -42,6 +42,7 @@ class RolesAndPermissionsSeeder extends Seeder
         'instructions.send' => 'Instruct Finance (imprest) and Procurement (tickets) to act on an approved memo',
         'instructions.action' => 'Acknowledge and complete the CEO\'s instructions addressed to their own department',
         'workplans.prepare' => 'Prepare their own department\'s workplan and budget estimates and submit them to the CEO',
+        'staff.directory' => 'See the full staff directory (every officer, searchable by email); others see only the officers their work needs',
         'compliance.override' => 'Allow one memo to be submitted while its department has overdue activity reports, with a reason',
         'staff.reassign' => 'Change an officer\'s department, designation or system access (promotion, transfer), with a reason',
     ];
@@ -56,7 +57,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'activities.postpone', 'activities.cancel', 'activities.execute', 'activities.close',
             'reference.manage', 'links.manage', 'reports.export', 'users.manage', 'audit.view',
             'memos.originate', 'memos.review', 'staff.add', 'budgets.prepare', 'budgets.approve',
-            'instructions.send', 'instructions.action', 'staff.reassign', 'workplans.prepare', 'compliance.override',
+            'instructions.send', 'instructions.action', 'staff.reassign', 'workplans.prepare', 'compliance.override', 'staff.directory',
         ],
         User::ROLE_CHIEF_OF_STAFF => [
             'activities.view', 'activities.manage', 'activities.submit', 'decisions.record', 'directives.manage',
@@ -71,7 +72,7 @@ class RolesAndPermissionsSeeder extends Seeder
         // Settings, configuration and logs; no activities.view, so no activity, dashboard or report
         // other than the access and audit log (CEO's approval, 11 October 2026).
         User::ROLE_ADMIN => [
-            'reference.manage', 'users.manage', 'audit.view', 'reports.export', 'staff.reassign',
+            'reference.manage', 'users.manage', 'audit.view', 'reports.export', 'staff.reassign', 'staff.directory',
         ],
         // Their own department's memos only: prepare, submit, correct and follow them to the
         // CEO's decision. No activities.view, so no register, dashboard, calendar or report.

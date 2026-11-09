@@ -24,6 +24,7 @@ use App\Services\AppSettings;
 use App\Services\DsaCalculator;
 use App\Services\ParticipantChecks;
 use App\Services\StaffRecords;
+use App\Services\StaffVisibility;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -178,7 +179,8 @@ class Team extends Component
     {
         $onTeam = $this->activity->participants()->whereNotNull('staff_id')->pluck('staff_id')->all();
 
-        return Staff::query()->active()->search($this->staffSearch)->whereNotIn('id', $onTeam)
+        // Own department to browse; other departments by name or PF number (App\Services\StaffVisibility).
+        return app(StaffVisibility::class)->forPicker(Staff::query()->active(), Auth::user(), $this->staffSearch)->whereNotIn('id', $onTeam)
             ->when($this->staffDepartment, fn ($q, $id) => $q->where('department_id', $id))
             ->with(['department', 'designation'])->orderBy('name')->limit(100)->get();
     }

@@ -20,6 +20,7 @@ use App\Services\DelegatedMemos;
 use App\Services\DsaCalculator;
 use App\Services\MemoDocument;
 use App\Services\PrivacyConsentService;
+use App\Services\StaffVisibility;
 use App\Support\DsaPeriod;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Carbon;
@@ -455,7 +456,7 @@ class MemoRequest extends Component
             'costCategories' => CostCategory::query()->active()->whereNotIn('code', DsaCalculator::COMPUTED_CODES)->ordered()->get(['id', 'name']),
             'roles' => ParticipantRole::cases(),
             'matches' => $memo && $editable && mb_strlen($search) >= 2
-                ? Staff::query()->active()->search($search)->whereNotIn('id', $memo->participants->pluck('staff_id')->filter())->with(['department', 'designation'])->orderBy('name')->limit(20)->get()
+                ? app(StaffVisibility::class)->forPicker(Staff::query()->active(), null, $search)->whereNotIn('id', $memo->participants->pluck('staff_id')->filter())->with(['department', 'designation'])->orderBy('name')->limit(20)->get()
                 : collect(),
             'period' => ($days = $this->dayCount()) ? DsaPeriod::of(Carbon::parse($this->start_date), $days) : null,
         ]);

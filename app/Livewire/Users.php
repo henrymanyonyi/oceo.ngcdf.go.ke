@@ -7,6 +7,7 @@ use App\Models\Department;
 use App\Models\Staff;
 use App\Models\User;
 use App\Services\AuditLogger;
+use App\Services\StaffVisibility;
 use App\Support\MobileNumber;
 use Closure;
 use Illuminate\Support\Facades\Auth;
@@ -323,7 +324,7 @@ class Users extends Component
         return view('livewire.users', [
             'heads' => $users->filter(fn (User $u) => $u->roleName() === User::ROLE_HOD)->sortBy([['is_active', 'desc'], [fn ($a, $b) => strcmp((string) $a->department?->name, (string) $b->department?->name)]])->values(),
             'departments' => Department::query()->active()->ordered()->get(['id', 'name']),
-            'staffMatches' => mb_strlen($search) >= 2 ? Staff::query()->active()->search($search)->with('department')->orderBy('name')->limit(8)->get() : collect(),
+            'staffMatches' => mb_strlen($search) >= 2 ? app(StaffVisibility::class)->forPicker(Staff::query()->active(), Auth::user(), $search)->with('department')->orderBy('name')->limit(8)->get() : collect(),
             'pickedStaff' => $this->staff_id ? Staff::query()->with('department')->find($this->staff_id) : null,
             'slots' => collect(User::ROLES)->except(User::DEPARTMENTAL_ROLES)->map(fn ($label, $role) => [
                 'label' => $label,

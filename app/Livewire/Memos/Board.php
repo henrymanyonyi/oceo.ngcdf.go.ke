@@ -92,7 +92,8 @@ class Board extends Component
 
     public function pickRequestStaff(int $id): void
     {
-        $this->requestStaffId = Staff::query()->active()->findOrFail($id)->id;
+        // A Head delegates only to an officer of their own department (DelegatedMemos::request checks it too).
+        $this->requestStaffId = Staff::query()->active()->where('department_id', Auth::user()->department_id ?? 0)->findOrFail($id)->id;
         $this->requestSearch = '';
     }
 
@@ -185,9 +186,11 @@ class Board extends Component
             'canRequest' => $user->isHeadOfDepartment(),
             'requests' => $tab === 'from_staff' && $user->isHeadOfDepartment() ? app(DelegatedMemos::class)->linksFor($user) : collect(),
             'requestMatches' => $this->showRequest && mb_strlen(trim($this->requestSearch)) >= 2
-                ? Staff::query()->active()->search(trim($this->requestSearch))->with('department')->orderByRaw('department_id = ? desc', [$user->department_id])->orderBy('name')->limit(10)->get()
+                ? Staff::query()->active()->where('department_id', $user->department_id ?? 0)
+                    ->where(fn ($q) => $q->where('name', 'like', '%'.trim($this->requestSearch).'%')->orWhere('staff_number', 'like', '%'.trim($this->requestSearch).'%'))
+                    ->with('department')->orderBy('name')->limit(10)->get()
                 : collect(),
-            'requestPicked' => $this->requestStaffId ? Staff::query()->with('department')->find($this->requestStaffId) : null,
+            'requestPicked' => $this->requestStaffId ? Staff::query()->where('department_id', $user->department_id ?? 0)->with('department')->find($this->requestStaffId) : null,
         ]);
     }
 }

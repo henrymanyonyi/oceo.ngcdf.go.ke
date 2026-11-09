@@ -1,6 +1,6 @@
 @use('App\Support\Ui')
     {{-- Add officers --}}
-    <x-ui.modal show="showAdd" :open="$showAdd" size="large" icon="fa-user-plus" title="Add officers" subtitle="Tick the officers taking part. If someone is not on the list, add them to the staff list here.">
+    <x-ui.modal show="showAdd" :open="$showAdd" size="large" icon="fa-user-plus" title="Add officers" subtitle="Tick the officers taking part. Your department is listed; search by name or PF number for an officer of another department. If someone is not on the staff list, add them here.">
         <div class="flex flex-col sm:flex-row gap-3">
             <div class="relative flex items-center flex-1">
                 <i class="fa-solid fa-magnifying-glass absolute left-3 text-gray-400 text-xs pointer-events-none"></i>
