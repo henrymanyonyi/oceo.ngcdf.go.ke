@@ -5,6 +5,7 @@ namespace App\Livewire\Memos;
 use App\Enums\ActivityStatus;
 use App\Enums\ReviewOffice;
 use App\Livewire\Activities\Form;
+use App\Livewire\Concerns\EntersLocations;
 use App\Livewire\Concerns\RunsActions;
 use App\Livewire\Concerns\SubmitsMemo;
 use App\Models\Activity;
@@ -38,6 +39,7 @@ use Livewire\WithFileUploads;
 #[Layout('layouts.admin')]
 class Compose extends Component
 {
+    use EntersLocations;
     use RunsActions;
     use SubmitsMemo;
     use WithFileUploads;
@@ -115,35 +117,12 @@ class Compose extends Component
 
     // ── Step 3: venue and location ─────────────────────────────────────
 
-    public function updatedLocCounty(): void
-    {
-        $this->locConstituency = '';
-    }
-
-    public function updatedLocConstituency(string $value): void
-    {
-        if ($value && $c = Constituency::find($value)) {
-            $this->locCounty = (string) $c->county_id;
-            $this->locRegion = (string) $c->region_id;
-        }
-    }
-
-    /** MD-04: a location; the county decides whether DSA applies. */
+    /** MD-04: a location, every field required (App\Livewire\Concerns\EntersLocations). */
     public function addLocation(ActivityEditor $editor): void
     {
-        $this->validate([
-            'locRegion' => ['nullable', 'exists:regions,id'],
-            'locCounty' => ['required_without_all:locVenue,locRegion', 'nullable', 'exists:counties,id'],
-            'locConstituency' => ['nullable', 'exists:constituencies,id'],
-            'locVenue' => ['nullable', 'string', 'max:255'],
-        ], ['locCounty.required_without_all' => 'Choose the county, or at least give the venue.'], ['locCounty' => 'county', 'locVenue' => 'venue']);
+        $this->validate($this->locationRules(), $this->locationMessages(), $this->locationAttributes());
 
-        if ($this->attempt(fn () => $editor->addLocation($this->activity, [
-            'region_id' => $this->locRegion ?: null,
-            'county_id' => $this->locCounty ?: null,
-            'constituency_id' => $this->locConstituency ?: null,
-            'venue' => $this->locVenue ?: null,
-        ], Auth::user()), 'Location added.')) {
+        if ($this->attempt(fn () => $editor->addLocation($this->activity, $this->locationData(), Auth::user()), 'Location added.')) {
             $this->reset(['locRegion', 'locCounty', 'locConstituency', 'locVenue']);
             $this->changed();
         }

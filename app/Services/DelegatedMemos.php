@@ -390,7 +390,7 @@ class DelegatedMemos
         return $memo;
     }
 
-    /** One location: the county (for DSA), constituency and venue. */
+    /** One location: county, constituency and venue (the region from the constituency). */
     private function saveLocation(Activity $memo, array $data, User $hod): void
     {
         $county = filled($data['county_id'] ?? null) ? County::query()->find($data['county_id']) : null;

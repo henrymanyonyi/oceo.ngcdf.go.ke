@@ -83,7 +83,7 @@ class DsaCalculator
         $warnings = [];
 
         if (! $travels) {
-            $warnings[] = 'No location in a county is set for the activity, so DSA was not calculated.';
+            $warnings[] = 'The activity has no venue and location yet, so DSA was not calculated. Add them to calculate it.';
         }
 
         DB::transaction(function () use ($activity, $category, $travels, &$warnings) {

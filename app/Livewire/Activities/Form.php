@@ -75,8 +75,6 @@ class Form extends Component
     /** The memo's "Request for approval" as typed; empty keeps the standard wording (MemoDocument). */
     public string $approval_request = '';
 
-    public string $requested_budget = '';
-
     public string $responsible_hod_id = '';
 
     public string $responsible_hod_name = '';
@@ -132,7 +130,7 @@ class Form extends Component
             $this->activity = $activity;
             $this->loadedVersion = (string) $activity->updated_at?->toIso8601String();
             // Optional columns are NULL in the database but strings here, so cast before filling.
-            foreach (['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'target_audience', 'requested_budget', 'notes', 'approval_request', 'source_reference', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id', 'budget_line_id', 'responsible_hod_id', 'responsible_hod_name'] as $key) {
+            foreach (['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'target_audience', 'notes', 'approval_request', 'source_reference', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id', 'budget_line_id', 'responsible_hod_id', 'responsible_hod_name'] as $key) {
                 $this->{$key} = (string) ($activity->{$key} ?? '');
             }
             $this->memo_sections = collect((array) $activity->memo_sections)->map(fn ($s) => ['heading' => (string) ($s['heading'] ?? ''), 'body' => (string) ($s['body'] ?? '')])->values()->all();
@@ -334,7 +332,6 @@ class Form extends Component
             'memo_sections.*.heading' => ['required', 'string', 'max:150'],
             'memo_sections.*.body' => ['required', 'string', 'max:5000'],
             'target_audience' => ['nullable', 'string', 'max:255'],
-            'requested_budget' => ['nullable', 'numeric', 'min:0', 'max:9999999999999', 'regex:/^\d+(\.\d{1,2})?$/'],
             'responsible_hod_id' => ['nullable', 'exists:users,id'],
             'responsible_hod_name' => ['nullable', 'string', 'max:255'],
             'notes' => ['nullable', 'string', 'max:5000'],
@@ -371,7 +368,7 @@ class Form extends Component
     /** @return array<string, string> */
     protected function validationAttributes(): array
     {
-        return ['purpose' => 'purpose', 'source_reference' => 'memo reference', 'issued_on' => 'date issued', 'organising_department_id' => 'requesting department', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'end_date' => 'expected completion date', 'start_date' => 'planned start date', 'memo' => 'source document', 'justification' => 'introduction and justification', 'risks' => 'key risks', 'memo_sections.*.heading' => 'section heading', 'memo_sections.*.body' => 'section text', 'requested_budget' => 'estimated budget', 'target_audience' => 'participants and stakeholders', 'expected_outputs' => 'expected outcomes and deliverables', 'activity_type_id' => 'activity type', 'notes' => 'notes', 'approval_request' => 'request for approval', 'responsible_hod_id' => 'Head of Department', 'responsible_hod_name' => 'Head of Department'];
+        return ['purpose' => 'purpose', 'source_reference' => 'memo reference', 'issued_on' => 'date issued', 'organising_department_id' => 'requesting department', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'end_date' => 'expected completion date', 'start_date' => 'planned start date', 'memo' => 'source document', 'justification' => 'introduction and justification', 'risks' => 'key risks', 'memo_sections.*.heading' => 'section heading', 'memo_sections.*.body' => 'section text', 'target_audience' => 'participants and stakeholders', 'expected_outputs' => 'expected outcomes and deliverables', 'activity_type_id' => 'activity type', 'notes' => 'notes', 'approval_request' => 'request for approval', 'responsible_hod_id' => 'Head of Department', 'responsible_hod_name' => 'Head of Department'];
     }
 
     public function save(ActivityEditor $editor, DocumentStore $documents): void
@@ -393,7 +390,7 @@ class Form extends Component
 
         $data['days'] = $this->dayCount();
         $data['category_other'] = $this->categoryRequiresDetail() ? trim((string) $data['category_other']) : null;
-        $fields = ['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'memo_sections', 'target_audience', 'requested_budget', 'notes', 'approval_request', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id',
+        $fields = ['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'memo_sections', 'target_audience', 'notes', 'approval_request', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id',
             'budget_line_id', 'start_date', 'days', 'count_externals_in_per_head'];
         $fields = $this->isOffice()
             ? [...$fields, 'source_reference', 'source_received_on', 'responsible_hod_id', 'responsible_hod_name']
@@ -469,7 +466,7 @@ class Form extends Component
             ['id' => 'step-details', 'number' => 1, 'title' => 'About the activity', 'done' => $filled('title', 'activity_category_id', 'purpose'), 'locked' => false],
             ['id' => 'step-source', 'number' => 2, 'title' => 'Source', 'done' => $filled('organising_department_id'), 'locked' => false],
             ['id' => 'step-dates', 'number' => 3, 'title' => 'Dates and location', 'done' => $filled('start_date', 'end_date'), 'locked' => false],
-            ['id' => 'step-budget', 'number' => 4, 'title' => 'Budget', 'done' => $filled('requested_budget') || $filled('budget_line_id'), 'locked' => false],
+            ['id' => 'step-budget', 'number' => 4, 'title' => 'Budget', 'done' => $filled('budget_line_id') || ($saved && $this->activity->costs()->exists()), 'locked' => false],
             ['id' => 'step-team', 'number' => 5, 'title' => 'Team and costs', 'done' => $saved && $this->activity->participants()->exists(), 'locked' => ! $saved],
         ];
     }

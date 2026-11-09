@@ -101,7 +101,7 @@
                 </x-ui.card>
             </x-memo.step>
 
-            <x-memo.step id="step-dates" number="3" title="Dates and location" line="When the activity runs and where. The county decides whether allowances (DSA) apply." :done="$pageSteps[2]['done']">
+            <x-memo.step id="step-dates" number="3" title="Dates and location" line="When the activity runs and where. Allowances (DSA) are each officer's standard rate for their job grade × payable nights." :done="$pageSteps[2]['done']">
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
                     <x-ui.card title="Dates" icon="fa-calendar" padded>
                         @include('livewire.activities.partials.form-dates')
@@ -112,7 +112,7 @@
                                 <x-ui.field label="Region" for="region" error="region_id">
                                     <select id="region" wire:model.live="region_id" class="{{ $sel }}"><option value="">Any</option>@foreach ($regions as $r)<option value="{{ $r->id }}">{{ $r->name }}</option>@endforeach</select>
                                 </x-ui.field>
-                                <x-ui.field label="County" for="county" error="county_id" hint="Decides whether DSA applies.">
+                                <x-ui.field label="County" for="county" error="county_id" hint="Where the activity takes place.">
                                     <select id="county" wire:model.live="county_id" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($counties as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select>
                                 </x-ui.field>
                                 <x-ui.field label="Constituency" for="const" error="constituency_id">

@@ -126,8 +126,6 @@ class MemoDocument
         $total = Money::toCents($activity->estimated_total);
         if ($total === 0) {
             $add('The budget has no cost lines yet; the memo would request KES 0.00.', false);
-        } elseif ($activity->requested_budget !== null && Money::toCents($activity->requested_budget) !== $total) {
-            $add(sprintf('Your own estimate (KES %s) differs from the costed budget (KES %s). The memo uses the costed budget.', Money::format(Money::toCents($activity->requested_budget)), Money::format($total)), false);
         }
 
         $pending = $this->checks->pendingStaff($activity->start_date, $activity->end_date, $activity->id);

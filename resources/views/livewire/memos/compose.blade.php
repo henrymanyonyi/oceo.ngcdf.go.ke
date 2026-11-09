@@ -39,7 +39,7 @@
             <livewire:activities.form :activity="$a" :embedded="true" wire:key="memo-details" />
 
             {{-- Step 3 --}}
-            <x-memo.step id="step-place" number="3" title="Venue and location" line="Where the activity takes place. The county decides whether allowances (DSA) are paid." :done="$steps[2]['done']" :locked="! $a">
+            <x-memo.step id="step-place" number="3" title="Venue and location" line="Where the activity takes place: region, county, constituency and venue, all required. Add a line for each place the activity goes to." :done="$steps[2]['done']" :locked="! $a">
                 @if (! $a)
                     <x-memo.step-locked />
                 @else
@@ -58,10 +58,10 @@
                         <form wire:submit="addLocation" class="p-5 {{ $a->locations->isNotEmpty() ? 'border-t border-slate-100 bg-slate-50/50' : '' }}">
                             <p class="text-[12px] font-semibold text-slate-600 mb-3">{{ $a->locations->isEmpty() ? 'Add the venue and location' : 'Add another location' }}</p>
                             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                                <x-ui.field label="Region" for="l-r" error="locRegion"><select id="l-r" wire:model.live="locRegion" class="{{ $sel }}"><option value="">Any</option>@foreach ($regions as $r)<option value="{{ $r->id }}">{{ $r->name }}</option>@endforeach</select></x-ui.field>
-                                <x-ui.field label="County" for="l-c" error="locCounty"><select id="l-c" wire:model.live="locCounty" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($counties as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
-                                <x-ui.field label="Constituency" for="l-k" error="locConstituency"><select id="l-k" wire:model.live="locConstituency" class="{{ $sel }}" @disabled($constituencies->isEmpty())><option value="">{{ $locCounty ? 'Any' : 'County first' }}</option>@foreach ($constituencies as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
-                                <x-ui.field label="Venue" for="l-v" error="locVenue"><input id="l-v" type="text" wire:model="locVenue" maxlength="255" class="{{ Ui::CONTROL }}" placeholder="e.g. NGCDF Board HQ"></x-ui.field>
+                                <x-ui.field label="Region" for="l-r" error="locRegion" required><select id="l-r" wire:model.live="locRegion" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($regions as $r)<option value="{{ $r->id }}">{{ $r->name }}</option>@endforeach</select></x-ui.field>
+                                <x-ui.field label="County" for="l-c" error="locCounty" required><select id="l-c" wire:model.live="locCounty" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($counties as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
+                                <x-ui.field label="Constituency" for="l-k" error="locConstituency" required><select id="l-k" wire:model.live="locConstituency" class="{{ $sel }}" @disabled($constituencies->isEmpty())><option value="">{{ $locCounty ? 'Any' : 'County first' }}</option>@foreach ($constituencies as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
+                                <x-ui.field label="Venue" for="l-v" error="locVenue" required><input id="l-v" type="text" wire:model="locVenue" maxlength="255" class="{{ Ui::CONTROL }}" placeholder="e.g. NGCDF Board HQ"></x-ui.field>
                             </div>
                             <div class="mt-3 flex justify-end">
                                 <button type="submit" class="{{ Ui::BTN_PRIMARY }}" wire:loading.attr="disabled" wire:target="addLocation"><i class="fa-solid fa-plus text-xs"></i>Add location</button>

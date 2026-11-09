@@ -81,9 +81,9 @@ it('lists what is missing without inventing it, and blocks submission only on wh
         ->toContain('No budget line is chosen')
         ->toContain('The budget has no cost lines yet');
 
-    // The full memo has nothing blocking; the department's own estimate differs from the costed budget, which is flagged.
+    // The full memo has nothing blocking; the department's own estimate is no longer asked for or compared (10 Nov 2026).
     expect($this->memoDocument->blockingIssues($this->memo))->toBe([])
-        ->and(collect($this->memoDocument->issues($this->memo))->pluck('message')->implode(' '))->toContain('Your own estimate (KES 250,000.00) differs from the costed budget');
+        ->and(collect($this->memoDocument->issues($this->memo))->pluck('message')->implode(' '))->not->toContain('Your own estimate');
 });
 
 it('fills the signature blocks from the audit trail as the memo moves on', function () {
