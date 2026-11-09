@@ -27,28 +27,13 @@ it('gives the full directory, with email search, to the CEO and the System Admin
         ->set('search', 'other.secret')->assertSee('Other Officer');
 })->with(['ceo', 'admin']);
 
-it('shows a Head of Department only their own department and the officers they added', function () {
-    $added = Staff::factory()->create(['name' => 'Added Elsewhere', 'department_id' => $this->hr->id, 'created_by' => $this->hod->id]);
+it('refuses the staff list to everyone else, whatever the URL or the component call', function (string $role) {
+    $user = $role === 'hod' ? $this->hod : User::factory()->{$role}()->create();
 
-    Livewire::actingAs($this->hod)->test(StaffList::class)
-        ->assertSee('Own Officer')->assertSee('Added Elsewhere')->assertDontSee('Other Officer')
-        // A department in the URL, a name search or an email search never opens another department.
-        ->set('department_id', (string) $this->hr->id)->assertDontSee('Other Officer')
-        ->set('search', 'Other Officer')->assertDontSee('Other Officer')
-        ->set('search', 'other.secret')->assertDontSee('Other Officer');
-
-    $this->actingAs($this->hod)->get(route('staff.index', ['department_id' => $this->hr->id, 'search' => 'Other']))
-        ->assertOk()->assertDontSee('Other Officer');
-});
-
-it('lets the Chief of Staff and the Assistant find an officer by name or PF number, never browse or search by email', function (string $role) {
-    Livewire::actingAs(User::factory()->{$role}()->create())->test(StaffList::class)
-        ->assertDontSee('Own Officer')->assertDontSee('Other Officer')->assertSee('Search for an officer')
-        ->set('department_id', (string) $this->hr->id)->assertDontSee('Other Officer')
-        ->set('search', 'O')->assertDontSee('Other Officer')
-        ->set('search', 'other.secret')->assertDontSee('Other Officer')
-        ->set('search', 'Other Off')->assertSee('Other Officer')->assertDontSee('Own Officer');
-})->with(['chiefOfStaff', 'assistant']);
+    $this->actingAs($user)->get(route('staff.index'))->assertForbidden();
+    $this->actingAs($user)->get(route('staff.index', ['department_id' => $this->hr->id, 'search' => 'Other']))->assertForbidden();
+    Livewire::actingAs($user)->test(StaffList::class)->assertForbidden();
+})->with(['hod', 'chiefOfStaff', 'assistant']);
 
 it('refuses the staff list to an account without a staff permission', function () {
     $user = User::factory()->create();
@@ -56,14 +41,16 @@ it('refuses the staff list to an account without a staff permission', function (
     $this->actingAs($user)->get(route('staff.index'))->assertForbidden();
 });
 
-it('lets a Head browse only their own department when building a team, and find others by name', function () {
+it('lists nobody in a Head\'s team picker until they search, then any officer by name or PF number, never by email', function () {
     $memo = departmentMemo($this->hod);
 
-    $team = Livewire::actingAs($this->hod)->test(Team::class, ['activity' => $memo])->set('showAdd', true);
-
-    $team->assertSee('Own Officer')->assertDontSee('Other Officer')
+    Livewire::actingAs($this->hod)->test(Team::class, ['activity' => $memo])->set('showAdd', true)
+        ->assertDontSee('Own Officer')->assertDontSee('Other Officer')->assertSee('Type at least two letters')
         ->set('staffDepartment', (string) $this->hr->id)->assertDontSee('Other Officer')
+        ->set('staffDepartment', '')
+        ->set('staffSearch', 'O')->assertDontSee('Other Officer')
         ->set('staffSearch', 'other.secret')->assertDontSee('Other Officer')
+        ->set('staffSearch', 'Own Off')->assertSee('Own Officer')->assertDontSee('Other Officer')
         ->set('staffSearch', 'Other Off')->assertSee('Other Officer');
 });
 

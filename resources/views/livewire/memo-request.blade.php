@@ -98,15 +98,12 @@
                                 </x-ui.card>
                                 <x-ui.card title="Venue and location" icon="fa-location-dot" padded>
                                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                        <x-ui.field label="County" for="mr-co" error="county_id" hint="Needed for allowances (DSA) when officers travel."><select id="mr-co" wire:model.live="county_id" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($counties as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
-                                        <x-ui.field label="Constituency" for="mr-k" error="constituency_id"><select id="mr-k" wire:model="constituency_id" class="{{ $sel }}" @disabled($constituencies->isEmpty())><option value="">{{ $county_id ? 'Any' : 'County first' }}</option>@foreach ($constituencies as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
+                                        <x-ui.field label="County" for="mr-co" error="county_id" required hint="Where the activity takes place."><select id="mr-co" wire:model.live="county_id" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($counties as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
+                                        <x-ui.field label="Constituency" for="mr-k" error="constituency_id" required><select id="mr-k" wire:model="constituency_id" class="{{ $sel }}" @disabled($constituencies->isEmpty())><option value="">{{ $county_id ? 'Any' : 'County first' }}</option>@foreach ($constituencies as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
                                         <x-ui.field label="Venue" for="mr-v" error="venue" required class="sm:col-span-2"><input id="mr-v" type="text" wire:model="venue" maxlength="255" class="{{ Ui::CONTROL }}" placeholder="e.g. NGCDF Board headquarters"></x-ui.field>
                                     </div>
                                 </x-ui.card>
                             </div>
-                            <x-ui.card title="Budget" icon="fa-coins" padded>
-                                <x-ui.field label="Estimated budget (KES)" for="mr-b" error="requested_budget" hint="Your own estimate. The costed plan comes from the team and cost lines further down; allowances (DSA) are calculated for you."><input id="mr-b" type="text" inputmode="decimal" wire:model="requested_budget" class="{{ Ui::CONTROL }} font-numeric" placeholder="e.g. 250000"></x-ui.field>
-                            </x-ui.card>
                         @endif
                     </x-memo.step>
 
@@ -199,7 +196,7 @@
                                     <x-ui.field label="For" for="mc-p" error="costParticipant"><select id="mc-p" wire:model="costParticipant" class="{{ $sel }}"><option value="">The whole activity</option>@foreach ($memo->participants as $p)<option value="{{ $p->id }}">{{ $p->displayName() }}</option>@endforeach</select></x-ui.field>
                                     <x-ui.field label="Description" for="mc-d" error="costDescription"><input id="mc-d" type="text" wire:model="costDescription" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
                                 </div>
-                                <x-memo.cost-method class="mt-3" :headcount="$memo->staff_count + $memo->external_count" />
+                                <x-memo.cost-method class="mt-3" :headcount="$memo->staff_count + $memo->external_count" :days="(int) $memo->days" />
                                 <div class="flex justify-end mt-3"><button type="button" wire:click="addCost" class="{{ Ui::BTN_PRIMARY }}" wire:loading.attr="disabled" wire:target="addCost"><i class="fa-solid fa-plus text-xs"></i>Add cost line</button></div>
                             </div>
                         </x-ui.card>

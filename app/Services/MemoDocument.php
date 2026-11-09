@@ -467,7 +467,7 @@ class MemoDocument
                 $person = $line->activity_participant_id ? $people->get($line->activity_participant_id) : null;
                 $amount = Money::toCents($line->estimated_amount);
                 $item = $line->category?->name.($line->is_computed || blank($line->description) ? '' : ': '.$line->description).($line->isOverridden() ? ' (adjusted)' : '');
-                $perPerson = ! $line->is_computed && $line->method() === CostMethod::PerPerson;
+                $perPerson = ! $line->is_computed && $line->method()->isPerPerson();
                 $quantity = $line->quantity !== null ? rtrim(rtrim((string) $line->quantity, '0'), '.') : null;
 
                 // An external participant's payment says what its count is when it is not the column's (nights or days).
@@ -495,7 +495,7 @@ class MemoDocument
                     // Per person: the number of people on the line. A participant's own line: that participant's people.
                     'pax' => $perPerson ? (int) $line->quantity : ($person?->people()),
                     'merge' => $person !== null && ! $perPerson,
-                    'days' => $perPerson ? null : $quantity,
+                    'days' => $perPerson ? ($line->method() === CostMethod::PerPersonPerDay ? (string) $line->days : null) : $quantity,
                     // Per person: the cost for one person. A fixed amount for the activity has no rate.
                     'rate' => match (true) {
                         $line->unit_rate !== null => Money::toCents($line->unit_rate),

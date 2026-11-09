@@ -24,6 +24,7 @@ class ActivityCost extends Model
         'description',
         'calculation_method',
         'quantity',
+        'days',
         'unit_rate',
         'estimated_amount',
         'actual_amount',
@@ -89,19 +90,21 @@ class ActivityCost extends Model
     /** Number of people on a per-person line. */
     public function people(): ?int
     {
-        return $this->method() === CostMethod::PerPerson && $this->quantity !== null ? (int) $this->quantity : null;
+        return $this->method()->isPerPerson() && $this->quantity !== null ? (int) $this->quantity : null;
     }
 
-    /** "KES 4,000.00 × 10 people", or null for a fixed amount and for computed lines (they carry their own description). */
+    /** "KES 4,000.00 × 10 people (× 3 days)", or null for a fixed amount and for computed lines (they carry their own description). */
     public function calculationLabel(): ?string
     {
-        if ($this->is_computed || $this->method() !== CostMethod::PerPerson || $this->unit_rate === null) {
+        if ($this->is_computed || ! $this->method()->isPerPerson() || $this->unit_rate === null) {
             return null;
         }
 
         $people = (int) $this->people();
+        $days = $this->method() === CostMethod::PerPersonPerDay ? (int) $this->days : null;
 
-        return 'KES '.Money::format(Money::toCents($this->unit_rate)).' × '.$people.' '.($people === 1 ? 'person' : 'people');
+        return 'KES '.Money::format(Money::toCents($this->unit_rate)).' × '.$people.' '.($people === 1 ? 'person' : 'people')
+            .($days ? ' × '.$days.' '.($days === 1 ? 'day' : 'days') : '');
     }
 
     public function isShared(): bool

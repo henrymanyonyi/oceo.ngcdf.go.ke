@@ -681,18 +681,26 @@ class ActivityEditor
     {
         $method = CostMethod::tryFrom((string) ($data['calculation_method'] ?? '')) ?? CostMethod::Fixed;
 
-        if ($method === CostMethod::PerPerson) {
+        if ($method->isPerPerson()) {
             $unit = $this->positiveCents($data['unit_rate'] ?? null, 'Enter the cost per person, more than KES 0.');
             $people = filter_var($data['quantity'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 100000]]);
             if ($people === false) {
                 throw new ActivityWorkflowException('Enter the number of people, at least 1.');
             }
+            $days = 1;
+            if ($method === CostMethod::PerPersonPerDay) {
+                $days = filter_var($data['days'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 366]]);
+                if ($days === false) {
+                    throw new ActivityWorkflowException('Enter the number of days, from 1 to 366.');
+                }
+            }
 
             return array_merge($data, [
-                'calculation_method' => CostMethod::PerPerson,
+                'calculation_method' => $method,
                 'unit_rate' => Money::fromCents($unit),
                 'quantity' => $people,
-                'estimated_amount' => Money::fromCents($unit * $people),
+                'days' => $method === CostMethod::PerPersonPerDay ? $days : null,
+                'estimated_amount' => Money::fromCents($unit * $people * $days),
             ]);
         }
 
@@ -700,6 +708,7 @@ class ActivityEditor
             'calculation_method' => CostMethod::Fixed,
             'unit_rate' => null,
             'quantity' => null,
+            'days' => null,
             'estimated_amount' => Money::fromCents(Money::toCents($data['estimated_amount'] ?? null)),
         ]);
     }

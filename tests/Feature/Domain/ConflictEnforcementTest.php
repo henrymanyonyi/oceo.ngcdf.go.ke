@@ -113,6 +113,7 @@ it('shows each officer\'s field days this year when choosing a team, and can put
 
     Livewire::actingAs($this->cos)->test(Show::class, ['activity' => $draft])
         ->set('showAddStaff', true)
+        ->set('staffDepartment', (string) $busy->department_id)
         ->assertSee('0 field days in '.$fy->label())
         ->set('staffSort', 'fewest')
         ->assertSeeInOrder(['Zainab Idle', 'Peter Otieno']);

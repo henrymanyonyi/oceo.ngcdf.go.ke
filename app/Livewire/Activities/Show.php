@@ -13,8 +13,11 @@ use App\Enums\ReviewOffice;
 use App\Enums\ReviewRecommendation;
 use App\Enums\TravelMode;
 use App\Exceptions\ActivityWorkflowException;
+use App\Livewire\Concerns\AddsMissingOfficers;
+use App\Livewire\Concerns\ConfirmsSigning;
 use App\Livewire\Concerns\EntersCostLines;
 use App\Livewire\Concerns\EntersExternalParticipants;
+use App\Livewire\Concerns\EntersLocations;
 use App\Livewire\Concerns\RunsActions;
 use App\Livewire\Concerns\SendsInstructions;
 use App\Models\Activity;
@@ -43,6 +46,8 @@ use App\Services\DsaCalculator;
 use App\Services\ParticipantChecks;
 use App\Services\ParticipantReleases;
 use App\Services\ReportCompliance;
+use App\Services\Signing;
+use App\Services\StaffVisibility;
 use App\Support\FinancialYear;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
@@ -61,8 +66,11 @@ use Livewire\WithFileUploads;
 #[Layout('layouts.admin')]
 class Show extends Component
 {
+    use AddsMissingOfficers;
+    use ConfirmsSigning;
     use EntersCostLines;
     use EntersExternalParticipants;
+    use EntersLocations;
     use RunsActions;
     use SendsInstructions;
     use WithFileUploads;
@@ -292,10 +300,11 @@ class Show extends Component
             'showDecide', 'showRecordDecision', 'showPostpone', 'showExtend', 'showCancel', 'showComplianceOverride', 'showComplete', 'showReport', 'showReturnReport', 'showClose', 'showDiscard',
             'showForward', 'showReturnHod', 'showNote', 'reviewText', 'recommendation',
             'showAddStaff', 'showAddExternal', 'showAddGroup', 'groupLabel', 'groupCount', 'groupGrade', 'showRemoveParticipant', 'staffDepartment', 'staffOffice', 'showSelectedOnly', 'sameConflictReason', 'showDays', 'showExplain', 'overlapReason', 'staffSort', 'daysStart', 'daysEnd', 'showCost', 'showOverride', 'showLocation', 'showDirective', 'showImprest', 'showDocument', 'showInstruct', 'instruct', 'instructionNote', 'otherInstructions',
+            'signPassword', 'signCode', 'signCodeSentTo',
             'comment', 'memoReference', 'memoDate', 'scan', 'reason', 'newStart', 'newDays', 'extraDays', 'actualDate', 'reportReceivedOn', 'outputsAchieved',
             'findings', 'recommendations', 'reportFile', 'staffSearch', 'selectedStaff', 'conflictReasons', 'role', 'roleOther', ...self::EXTERNAL_FIELDS,
             'participantId', 'costId', 'costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode', 'overrideAmount',
-            'costMethod', 'costUnitRate', 'costPeople', 'costAmount',
+            'costMethod', 'costUnitRate', 'costPeople', 'costDays', 'costAmount', 'costType', 'costQueue',
             'locRegion', 'locCounty', 'locConstituency', 'locVenue', 'directiveBody', 'directiveDepartment', 'directiveDue', 'document',
             'showRelease', 'releaseKind', 'releaseLastDay', 'releaseInitiatedBy', 'releaseReason', 'releaseDestination', 'releaseRevised', 'releaseRevisionReason',
             'releaseExtraCategory', 'releaseExtraAmount', 'releaseExtraDescription',
@@ -318,6 +327,7 @@ class Show extends Component
 
     public function openDecide(string $decision): void
     {
+        $this->resetSigning();
         $this->reset(['instruct', 'instructionNote', 'otherInstructions']);
         $this->decision = DecisionType::from($decision)->value;
         $this->showDecide = true;
@@ -328,6 +338,11 @@ class Show extends Component
         $this->validate(['comment' => [DecisionType::from($this->decision)->requiresComment() ? 'required' : 'nullable', 'string', 'max:2000']]);
         if (DecisionType::from($this->decision) === DecisionType::Approved) {
             $this->validateInstructions();
+        }
+
+        // Approving is signed by the CEO in person: password and code first (ActivityLifecycle checks it again).
+        if (! $this->passesSigning($this->activity, DecisionType::from($this->decision) === DecisionType::Approved ? app(Signing::class)->actionFor($this->activity, $this->user(), 'decide') : null)) {
+            return;
         }
 
         if ($this->attempt(fn () => $lifecycle->decide($this->activity, DecisionType::from($this->decision), $this->comment, $this->user()))) {
@@ -375,10 +390,29 @@ class Show extends Component
 
     // ── Memo review ───────────────────────────────────────────────────
 
+    /** Back to Add officers with the officers just added to the staff list ticked (AddsMissingOfficers). */
+    protected function missingOfficersAdded(array $staffIds, ?string $search): void
+    {
+        $this->showAddStaff = true;
+        $this->staffSearch = (string) $search;
+        $this->selectedStaff = array_values(array_unique([...array_map('intval', $this->selectedStaff), ...$staffIds]));
+    }
+
+    public function openForward(): void
+    {
+        $this->resetSigning();
+        $this->resetErrorBag();
+        $this->showForward = true;
+    }
+
     /** Forward to the CEO (or to the Chief of Staff, when Settings route the Assistant's memos there). */
     public function forward(ActivityLifecycle $lifecycle): void
     {
         $this->validate($this->reviewRules(required: false));
+
+        if (! $this->passesSigning($this->activity, app(Signing::class)->actionFor($this->activity, $this->user(), 'forward'))) {
+            return;
+        }
 
         $where = $this->attempt(fn () => $lifecycle->forward($this->activity, $this->user(), $this->recommendationValue(), $this->reviewText));
 
@@ -561,8 +595,10 @@ class Show extends Component
     {
         $onTeam = $this->activity->participants()->whereNotNull('staff_id')->pluck('staff_id')->all();
 
-        return Staff::query()->active()
-            ->search($this->staffSearch)
+        // Search first: nobody is listed until a name or PF number is typed, or a department or duty station is chosen.
+        $browse = (bool) ($this->staffDepartment || $this->staffOffice || ($this->showSelectedOnly && ! $ignoreSelectedOnly));
+
+        return app(StaffVisibility::class)->forPicker(Staff::query()->active(), $this->user(), $this->staffSearch, $browse)
             ->whereNotIn('id', $onTeam)
             ->when($this->staffDepartment, fn ($q, $id) => $id === 'none' ? $q->whereNull('department_id') : $q->where('department_id', $id))
             ->when($this->staffOffice, fn ($q, $id) => $q->where('office_id', $id))
@@ -795,7 +831,7 @@ class Show extends Component
     public function openCost(?int $id = null): void
     {
         $this->resetErrorBag();
-        $this->reset(['costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode']);
+        $this->reset(['costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode', 'costQueue']);
         $this->resetCostMethod();
         $this->costId = $id;
         if ($id && $line = $this->activity->costs()->find($id)) {
@@ -808,7 +844,8 @@ class Show extends Component
         $this->showCost = true;
     }
 
-    public function saveCost(ActivityEditor $editor): void
+    /** The line in the cost popup, checked, as ActivityEditor::savePlannedCost() takes it (EntersCostLines). */
+    protected function validatedCostLine(): ?array
     {
         $this->validate([
             // An external participant's allowance is worked out from their rate, never typed in.
@@ -816,26 +853,39 @@ class Show extends Component
             'costParticipantId' => ['nullable', 'integer'],
             'costDescription' => ['nullable', 'string', 'max:255'],
             'costTravelMode' => ['nullable', 'in:'.implode(',', array_column(TravelMode::cases(), 'value'))],
-            'reason' => [$this->activity->status->requiresAmendment() ? 'required' : 'nullable', 'string', 'max:1000'],
             ...$this->costMethodRules(),
-        ], $this->costMethodMessages(), ['costCategoryId' => 'cost type'] + $this->costMethodAttributes());
+        ], ['costCategoryId.required' => 'Choose the cost type.'] + $this->costMethodMessages(), ['costCategoryId' => 'cost type'] + $this->costMethodAttributes());
 
         if ($this->costParticipantId && ! $this->activity->participants()->whereKey($this->costParticipantId)->exists()) {
             $this->addError('costParticipantId', 'Choose someone on this activity.');
 
-            return;
+            return null;
         }
 
-        $line = $this->costId ? $this->activity->costs()->findOrFail($this->costId) : null;
-        $returned = $this->attempt(fn () => $editor->savePlannedCost($this->activity, [
+        return [
             'cost_category_id' => (int) $this->costCategoryId,
             'activity_participant_id' => $this->costParticipantId ? (int) $this->costParticipantId : null,
             'description' => $this->costDescription ?: null,
             'travel_mode' => $this->costTravelMode ?: null,
-        ] + $this->costMethodData(), $this->user(), $line, $this->reason ?: null));
+        ] + $this->costMethodData();
+    }
+
+    /** Saves the line being edited, or every line added in the popup together (one reason covers them after submission). */
+    public function saveCost(ActivityEditor $editor): void
+    {
+        $this->validate(['reason' => [$this->activity->status->requiresAmendment() ? 'required' : 'nullable', 'string', 'max:1000']]);
+
+        $line = $this->costId ? $this->activity->costs()->findOrFail($this->costId) : null;
+        $lines = $line ? array_filter([$this->validatedCostLine()]) : $this->costLinesToSave();
+        if (! $lines) {
+            return;
+        }
+
+        $returned = $this->attempt(fn () => $this->saveCostLines(array_values($lines), fn (array $data) => $editor->savePlannedCost($this->activity, $data, $this->user(), $line, $this->reason ?: null)));
 
         if ($returned !== null) {
-            $this->done('Planned cost saved.'.($returned === true ? ' The increase is beyond tolerance, so the activity is back with the CEO.' : ''));
+            $message = count($lines) === 1 ? 'Planned cost saved.' : count($lines).' cost lines saved.';
+            $this->done($message.(in_array(true, $returned, true) ? ' The increase is beyond tolerance, so the activity is back with the CEO.' : ''));
         }
     }
 
@@ -914,29 +964,12 @@ class Show extends Component
 
     // ── Locations, documents, directives ────────────────────────────────
 
-    public function updatedLocConstituency(string $value): void
-    {
-        if ($value && $c = Constituency::find($value)) {
-            $this->locCounty = (string) $c->county_id;
-            $this->locRegion = (string) $c->region_id;
-        }
-    }
-
+    /** Every field required (EntersLocations). */
     public function addLocation(ActivityEditor $editor): void
     {
-        $this->validate([
-            'locRegion' => ['nullable', 'exists:regions,id'],
-            'locCounty' => ['nullable', 'exists:counties,id'],
-            'locConstituency' => ['nullable', 'exists:constituencies,id'],
-            'locVenue' => ['nullable', 'string', 'max:255'],
-        ]);
+        $this->validate($this->locationRules(), $this->locationMessages(), $this->locationAttributes());
 
-        if ($this->attempt(fn () => $editor->addLocation($this->activity, [
-            'region_id' => $this->locRegion ?: null,
-            'county_id' => $this->locCounty ?: null,
-            'constituency_id' => $this->locConstituency ?: null,
-            'venue' => $this->locVenue ?: null,
-        ], $this->user()))) {
+        if ($this->attempt(fn () => $editor->addLocation($this->activity, $this->locationData(), $this->user()))) {
             $this->done('Location added.');
         }
     }

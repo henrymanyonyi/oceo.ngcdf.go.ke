@@ -9,6 +9,7 @@ use App\Livewire\MemoRequest;
 use App\Livewire\Memos\Show as MemoPage;
 use App\Mail\AlertMessage;
 use App\Models\ActivityCategory;
+use App\Models\Constituency;
 use App\Models\CostCategory;
 use App\Models\County;
 use App\Models\Department;
@@ -282,6 +283,9 @@ it('takes the officer through the memo page: code, details, team, cost and submi
         ->call('continueToDates')->assertHasNoErrors()->assertSet('aboutDone', true)->assertDispatched('builder-go', id: 'step-dates')
         ->set('start_date', $details['start_date'])->set('end_date', Carbon::parse($details['start_date'])->addDays(2)->toDateString())
         ->set('county_id', (string) $details['county_id'])->set('venue', $details['venue'])
+        // Every part of the location is required (10 November 2026).
+        ->call('save')->assertHasErrors(['constituency_id'])
+        ->set('constituency_id', (string) Constituency::query()->where('county_id', $details['county_id'])->value('id'))
         ->call('save')->assertHasNoErrors()->assertDispatched('builder-go', id: 'step-team')
         ->assertSee('Add to team')
         ->set('staffSearch', 'Lucy')->assertSee('Lucy Teammate')
