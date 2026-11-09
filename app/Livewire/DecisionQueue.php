@@ -4,12 +4,14 @@ namespace App\Livewire;
 
 use App\Enums\ActivityStatus;
 use App\Enums\DecisionType;
+use App\Livewire\Concerns\ConfirmsSigning;
 use App\Livewire\Concerns\RunsActions;
 use App\Livewire\Concerns\SendsInstructions;
 use App\Models\Activity;
 use App\Models\ActivityParticipant;
 use App\Services\ActivityLifecycle;
 use App\Services\ParticipantChecks;
+use App\Services\Signing;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
 use Livewire\Attributes\Layout;
@@ -21,6 +23,7 @@ use Livewire\Component;
 #[Title('Decision queue')]
 class DecisionQueue extends Component
 {
+    use ConfirmsSigning;
     use RunsActions;
     use SendsInstructions;
 
@@ -38,6 +41,7 @@ class DecisionQueue extends Component
         $this->decision = DecisionType::from($decision)->value;
         $this->comment = '';
         $this->reset(['instruct', 'instructionNote', 'otherInstructions']);
+        $this->resetSigning();
         $this->resetErrorBag();
         $this->showDecide = true;
     }
@@ -50,6 +54,11 @@ class DecisionQueue extends Component
             $this->validateInstructions();
         }
         $activity = Activity::query()->findOrFail($this->activityId);
+
+        // Approving is signed by the CEO in person: password and code first (ActivityLifecycle checks it again).
+        if (! $this->passesSigning($activity, $type === DecisionType::Approved ? app(Signing::class)->actionFor($activity, Auth::user(), 'decide') : null)) {
+            return;
+        }
 
         if ($this->attempt(fn () => $lifecycle->decide($activity, $type, $this->comment, Auth::user()), "{$activity->reference}: {$type->label()}.")) {
             // Finance and Procurement only after an approval; a failure here leaves the decision in place, and the CEO can instruct from the activity.

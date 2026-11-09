@@ -8,6 +8,7 @@ use App\Enums\DecisionType;
 use App\Enums\ParticipationStatus;
 use App\Enums\ReviewOffice;
 use App\Enums\ReviewRecommendation;
+use App\Enums\SigningAction;
 use App\Enums\SubmissionRoute;
 use App\Exceptions\ActivityWorkflowException;
 use App\Models\Activity;
@@ -44,6 +45,7 @@ class ActivityLifecycle
         private MemoDocument $memoDocument,
         private MemoNumbering $numbering,
         private ReportCompliance $compliance,
+        private Signing $signing,
     ) {}
 
     /** Record the starting status of a newly created activity. */
@@ -102,7 +104,7 @@ class ActivityLifecycle
             default => 'Submitted for review by the '.$office->label(),
         }.($note !== '' ? ": {$note}" : '');
 
-        $this->move($activity, ActivityStatus::UnderReview, $reason, $user, extra: ['review_office' => $office, 'status_reason' => null, 'submission_route' => SubmissionRoute::Review] + $this->signing($user, $acting));
+        $this->move($activity, ActivityStatus::UnderReview, $reason, $user, extra: ['review_office' => $office, 'status_reason' => null, 'submission_route' => SubmissionRoute::Review] + $this->signing($user, $acting), sign: SigningAction::Prepared);
         $this->alerts->toOffice($office, ActivityAlert::submittedForReview($activity, $resubmitted));
     }
 
@@ -124,7 +126,7 @@ class ActivityLifecycle
             default => 'Submitted directly to the CEO',
         }.($note !== '' ? ": {$note}" : '');
 
-        $this->move($activity, ActivityStatus::AwaitingDecision, $reason, $user, extra: ['review_office' => null, 'status_reason' => null, 'submission_route' => SubmissionRoute::Direct] + $this->signing($user, $acting));
+        $this->move($activity, ActivityStatus::AwaitingDecision, $reason, $user, extra: ['review_office' => null, 'status_reason' => null, 'submission_route' => SubmissionRoute::Direct] + $this->signing($user, $acting), sign: SigningAction::Prepared);
         $this->alerts->toCeo(ActivityAlert::awaitingDecision($activity));
     }
 
@@ -262,18 +264,23 @@ class ActivityLifecycle
         $this->compliance->assertMaySubmit($activity);
 
         $comment = trim((string) $comment);
+        // What this forward signs follows from the step and the signed-in account, never from the request.
+        $signAs = $this->signing->actionFor($activity, $user, 'forward');
         $viaChiefOfStaff = ReviewOffice::forUser($user) === ReviewOffice::AssistantChiefOfStaff && $this->settings->bool('acos_forwards_via_cos');
 
         if ($viaChiefOfStaff) {
-            DB::transaction(function () use ($activity, $user, $recommendation, $comment) {
+            DB::transaction(function () use ($activity, $user, $recommendation, $comment, $signAs) {
                 $this->note($activity, $user, $comment, $recommendation);
 
                 if ($activity->status === ActivityStatus::UnderReview) {
                     $this->lockAt($activity, ActivityStatus::UnderReview);
                     $activity->forceFill(['review_office' => ReviewOffice::ChiefOfStaff])->save();
                     $this->history($activity, ActivityStatus::UnderReview, ActivityStatus::UnderReview, 'Forwarded to the Chief of Staff', $user, null);
+                    if ($signAs) {
+                        $this->sign($activity, $user, $signAs);
+                    }
                 } else {
-                    $this->move($activity, ActivityStatus::UnderReview, 'Forwarded to the Chief of Staff', $user, extra: ['review_office' => ReviewOffice::ChiefOfStaff, 'status_reason' => null]);
+                    $this->move($activity, ActivityStatus::UnderReview, 'Forwarded to the Chief of Staff', $user, extra: ['review_office' => ReviewOffice::ChiefOfStaff, 'status_reason' => null], sign: $signAs);
                 }
             });
 
@@ -285,9 +292,9 @@ class ActivityLifecycle
 
         $this->assertReadyForDecision($activity);
 
-        DB::transaction(function () use ($activity, $user, $recommendation, $comment) {
+        DB::transaction(function () use ($activity, $user, $recommendation, $comment, $signAs) {
             $this->note($activity, $user, $comment, $recommendation);
-            $this->move($activity, ActivityStatus::AwaitingDecision, 'Forwarded to the CEO', $user, extra: ['review_office' => null, 'status_reason' => null]);
+            $this->move($activity, ActivityStatus::AwaitingDecision, 'Forwarded to the CEO', $user, extra: ['review_office' => null, 'status_reason' => null], sign: $signAs);
         });
 
         $this->alerts->toCeo(ActivityAlert::awaitingDecision($activity));
@@ -822,7 +829,9 @@ class ActivityLifecycle
                 return $record;
             }
 
-            $this->move($activity, $decision->status(), trim($label.($comment ? ": {$comment}" : '')), $user, extra: $extra);
+            // Only the CEO's own approval in the system is signed; a decision recorded on the CEO's behalf never carries the CEO's signature.
+            $sign = $decision === DecisionType::Approved && $mode === DecisionMode::InSystem ? SigningAction::Approved : null;
+            $this->move($activity, $decision->status(), trim($label.($comment ? ": {$comment}" : '')), $user, extra: $extra, sign: $sign);
 
             $this->alerts->toStaffOfCeo(ActivityAlert::decidedForOffice($activity, $decision));
             $this->alerts->toDepartment($activity, ActivityAlert::decidedForDepartment($activity, $decision));
@@ -944,7 +953,7 @@ class ActivityLifecycle
     /**
      * @param  array<string, mixed>  $extra
      */
-    private function move(Activity $activity, ActivityStatus $to, ?string $reason, ?User $user, ?string $actorName = null, array $extra = []): void
+    private function move(Activity $activity, ActivityStatus $to, ?string $reason, ?User $user, ?string $actorName = null, array $extra = [], ?SigningAction $sign = null): void
     {
         $from = $activity->status;
 
@@ -952,7 +961,7 @@ class ActivityLifecycle
             throw new ActivityWorkflowException("An activity that is {$from->label()} cannot be moved to {$to->label()}.");
         }
 
-        DB::transaction(function () use ($activity, $from, $to, $reason, $user, $actorName, $extra) {
+        DB::transaction(function () use ($activity, $from, $to, $reason, $user, $actorName, $extra, $sign) {
             $this->lockAt($activity, $from);
             // Formally registered on its first submission: numbered in the same transaction, kept for good.
             if (in_array($to, [ActivityStatus::UnderReview, ActivityStatus::AwaitingDecision], true) && $activity->memo_number === null) {
@@ -960,7 +969,24 @@ class ActivityLifecycle
             }
             $activity->forceFill(['status' => $to] + $extra)->save();
             $this->history($activity, $from, $to, $reason, $user, $actorName);
+            if ($sign && $user) {
+                $this->sign($activity, $user, $sign);
+            }
         });
+    }
+
+    /**
+     * The signing record for this step (App\Services\Signing), in the step's own transaction: without the
+     * officer's confirmation (password and code) the step is undone. The Head signs with the designation
+     * recorded on the memo; the Office of the CEO with its role.
+     */
+    private function sign(Activity $activity, User $user, SigningAction $action): void
+    {
+        $designation = $action === SigningAction::Prepared && $user->isMemoOriginator()
+            ? ($activity->signedDesignation() ?? $user->signingDesignation())
+            : $user->roleLabel();
+
+        $this->signing->sign($activity, $user, $action, $designation);
     }
 
     /**

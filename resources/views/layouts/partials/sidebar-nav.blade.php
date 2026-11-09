@@ -58,6 +58,7 @@
             ['route' => 'staff.index', 'match' => 'staff.*', 'icon' => 'fa-id-badge', 'label' => 'Staff list', 'can' => 'staff.directory'],
             ['route' => 'settings.reference', 'match' => 'settings.*', 'icon' => 'fa-sliders', 'label' => 'Reference data', 'can' => 'reference.manage'],
             ['route' => 'users.index', 'match' => 'users.*', 'icon' => 'fa-users-gear', 'label' => 'User accounts', 'can' => 'users.manage'],
+            ['route' => 'signatures.index', 'match' => 'signatures.index', 'icon' => 'fa-signature', 'label' => 'Signatures', 'can' => 'signatures.verify'],
             ['route' => 'audit.index', 'match' => 'audit.*', 'icon' => 'fa-clock-rotate-left', 'label' => 'Audit and access log', 'can' => 'audit.view'],
             ['route' => 'reports.show', 'params' => ['report' => 'message-log'], 'match' => 'audit.*', 'active' => request()->routeIs('reports.show') && request()->route('report') === 'message-log', 'icon' => 'fa-paper-plane', 'label' => 'Email and SMS log', 'can' => 'audit.view'],
         ],

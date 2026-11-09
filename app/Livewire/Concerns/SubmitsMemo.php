@@ -4,6 +4,7 @@ namespace App\Livewire\Concerns;
 
 use App\Enums\ActivityStatus;
 use App\Enums\ReviewOffice;
+use App\Enums\SigningAction;
 use App\Enums\SubmissionRoute;
 use App\Services\ActivityLifecycle;
 use App\Services\ReportCompliance;
@@ -17,6 +18,8 @@ use Illuminate\Support\Facades\Auth;
  */
 trait SubmitsMemo
 {
+    use ConfirmsSigning;
+
     public bool $showSubmit = false;
 
     /** The review office for the COS/ACOS route. */
@@ -37,6 +40,7 @@ trait SubmitsMemo
         $this->route = ($this->activity->status === ActivityStatus::ReturnedToHod ? $this->activity->route() : SubmissionRoute::Review)->value;
         $this->note = '';
         $this->acting = (bool) $this->activity->hod_acting;
+        $this->resetSigning();
         $this->resetErrorBag();
         $this->showSubmit = true;
     }
@@ -51,6 +55,11 @@ trait SubmitsMemo
         ], [], ['note' => 'note', 'route' => 'route']);
 
         $resubmitting = $this->activity->status === ActivityStatus::ReturnedToHod;
+
+        // The Head signs the memo they submit: password and code first (ActivityLifecycle checks it again).
+        if (! $this->passesSigning($this->activity, SigningAction::Prepared)) {
+            return;
+        }
 
         if ($this->attempt(fn () => $lifecycle->submit($this->activity, Auth::user(), SubmissionRoute::from($this->route), ReviewOffice::from($this->office), $this->note, $this->acting)) === null) {
             return;

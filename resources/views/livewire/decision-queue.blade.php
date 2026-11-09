@@ -73,6 +73,7 @@
         </x-ui.field>
         @if ($decision === 'approved')
             @can('instructions.send')<x-memo.instruct :others="$otherInstructions" />@endcan
+            @if ($selected)<x-memo.signing-confirm step="decide" :action="\App\Enums\SigningAction::Approved" :activityId="$selected->id" :sentTo="$signCodeSentTo" />@endif
         @endif
         <x-slot:footer>
             <button type="button" wire:click="$set('showDecide', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>

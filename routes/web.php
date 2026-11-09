@@ -6,6 +6,7 @@ use App\Http\Controllers\MemoRequestPreviewController;
 use App\Http\Controllers\ParticipantTemplateController;
 use App\Http\Controllers\PrivacyStatementController;
 use App\Http\Controllers\ReportExportController;
+use App\Http\Controllers\SignatureImageController;
 use App\Http\Controllers\WorkplanFileController;
 use App\Livewire;
 use Illuminate\Support\Facades\Route;
@@ -98,6 +99,11 @@ Route::middleware(['auth:sanctum', config('jetstream.auth_session'), 'verified',
     Route::get('/staff', Livewire\StaffList::class)->middleware('permission:staff.directory')->name('staff.index');
     Route::get('/settings', Livewire\Settings\Reference::class)->middleware('permission:reference.manage')->name('settings.reference');
     Route::get('/users', Livewire\Users::class)->middleware('permission:users.manage')->name('users.index');
+    // Digital signatures (App\Services\SignatureRegistry, App\Services\Signing). The image only to its owner
+    // or a verifier (checked in the controller); verification of a signing code to anyone signed in who may read the memo.
+    Route::get('/signatures/{signature}/image', SignatureImageController::class)->name('signatures.image');
+    Route::get('/signatures', Livewire\Signatures::class)->middleware('permission:signatures.verify')->name('signatures.index');
+    Route::get('/verify/{code?}', Livewire\VerifySignature::class)->name('signatures.verify');
     Route::get('/audit', fn () => redirect()->route('reports.show', 'access-audit'))->middleware('permission:audit.view')->name('audit.index');
 });
 

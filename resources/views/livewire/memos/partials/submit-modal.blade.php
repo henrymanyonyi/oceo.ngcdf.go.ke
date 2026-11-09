@@ -46,6 +46,7 @@
         @else
             <p class="text-[13px] text-slate-600"><a href="{{ route('memos.document', $a) }}" target="_blank" rel="noopener" class="font-semibold text-emerald-700 hover:underline">Preview the memo and annexes</a> once more before you send it.</p>
         @endif
+        <x-memo.signing-confirm step="submit" :action="\App\Enums\SigningAction::Prepared" :sentTo="$signCodeSentTo" />
         <x-ui.field :label="$returned ? 'What you changed (optional)' : ($route === 'direct' ? 'Note to the CEO (optional)' : 'Note to the reviewer (optional)')" for="s-note" error="note">
             <textarea id="s-note" wire:model="note" rows="3" class="{{ Ui::CONTROL }}" maxlength="2000"></textarea>
         </x-ui.field>

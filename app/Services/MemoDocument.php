@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Enums\ActivityStatus;
 use App\Enums\CostMethod;
+use App\Enums\DecisionMode;
 use App\Enums\RateUnit;
+use App\Enums\SigningAction;
 use App\Models\Activity;
 use App\Models\ActivityCost;
 use App\Models\ActivityParticipant;
@@ -36,7 +38,7 @@ use Illuminate\Support\Collection;
  */
 class MemoDocument
 {
-    public function __construct(private ParticipantChecks $checks, private DsaCalculator $dsa, private AppSettings $settings) {}
+    public function __construct(private ParticipantChecks $checks, private DsaCalculator $dsa, private AppSettings $settings, private Signing $signing, private SignatureRegistry $signatureImages) {}
 
     /**
      * What is missing or inconsistent. Blocking items stop submission for
@@ -317,12 +319,17 @@ class MemoDocument
 
         // Sent directly to the CEO: nobody reviews or validates it, so those blocks are left out.
         $review = $activity->isDirectToCeo() ? [] : [
-            ['label' => 'Reviewed by', 'name' => $acos?->user?->name, 'designation' => User::ROLES[User::ROLE_ASSISTANT_CHIEF_OF_STAFF], 'date' => $acos?->created_at],
-            ['label' => 'Validated by', 'name' => $cos?->user?->name, 'designation' => User::ROLES[User::ROLE_CHIEF_OF_STAFF], 'date' => $cos?->created_at],
+            ['action' => SigningAction::Reviewed, 'label' => 'Reviewed by', 'name' => $acos?->user?->name, 'designation' => User::ROLES[User::ROLE_ASSISTANT_CHIEF_OF_STAFF], 'date' => $acos?->created_at],
+            ['action' => SigningAction::Validated, 'label' => 'Validated by', 'name' => $cos?->user?->name, 'designation' => User::ROLES[User::ROLE_CHIEF_OF_STAFF], 'date' => $cos?->created_at],
         ];
 
-        return [
+        // A decision the CEO gave outside the system and the Office recorded: the CEO's name and
+        // signature are never put on the memo by the person who recorded it.
+        $recorded = $activity->approved_at && $activity->approval_mode === DecisionMode::RecordedOnBehalf;
+
+        $blocks = [
             [
+                'action' => SigningAction::Prepared,
                 'label' => 'Prepared by',
                 'name' => $preparer?->name ?? $activity->submitted_by_name,
                 'designation' => $activity->isPreparedOnBehalf()
@@ -331,8 +338,56 @@ class MemoDocument
                 'date' => $submittedAt,
             ],
             ...$review,
-            ['label' => 'Approved by', 'name' => $activity->approved_at ? ($activity->approver?->name ?? 'Chief Executive Officer') : null, 'designation' => User::ROLES[User::ROLE_CEO], 'date' => $activity->approved_at],
+            [
+                'action' => SigningAction::Approved,
+                'label' => 'Approved by',
+                'name' => $activity->approved_at && ! $recorded ? ($activity->approver?->name ?? 'Chief Executive Officer') : null,
+                'designation' => User::ROLES[User::ROLE_CEO],
+                'date' => $recorded ? null : $activity->approved_at,
+                'note' => $recorded ? 'Decision given outside the system (memo '.$activity->approval_reference.'), recorded by '.($activity->approver?->name ?? 'the Office of the CEO').' on '.$activity->approved_at->format('d/m/Y').'. Not signed in OCEO.' : null,
+            ],
         ];
+
+        return $this->withSignings($activity, $blocks);
+    }
+
+    /**
+     * Puts each officer's signing on its block (App\Services\Signing): the signature, the time and the
+     * verification code, only where the officer confirmed that step in the system, and only while the memo
+     * still reads as it did when they signed. A signing made for an earlier version is shown as such,
+     * without the signature. A block nobody signed in the system stays blank, as on older memos.
+     *
+     * @param  list<array<string, mixed>>  $blocks
+     * @return list<array<string, mixed>>
+     */
+    private function withSignings(Activity $activity, array $blocks): array
+    {
+        $hash = $this->signing->fingerprint($activity);
+
+        return array_map(function (array $block) use ($activity, $hash) {
+            $signed = $this->signing->latest($activity, $block['action'], $hash);
+            if (! $signed) {
+                return $block + ['signed' => null];
+            }
+
+            $event = $signed['event'];
+            $image = null;
+            if ($signed['valid'] && $event->signature) {
+                try {
+                    $image = $this->signatureImages->dataUri($event->signature);
+                } catch (\Throwable) {
+                    $image = null; // An altered file is never shown.
+                }
+            }
+
+            return array_merge($block, [
+                // The block shows who actually signed, from the signing record, never from the request.
+                'name' => $event->signer_name,
+                'designation' => $block['action'] === SigningAction::Prepared && $activity->isPreparedOnBehalf() ? $block['designation'] : ($event->designation ?: $block['designation']),
+                'date' => $event->signed_at,
+                'signed' => ['valid' => $signed['valid'], 'image' => $image, 'code' => $event->verification_code, 'at' => $event->signed_at],
+            ]);
+        }, $blocks);
     }
 
     /**
