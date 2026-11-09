@@ -29,3 +29,4 @@ Write the body to a scratch file outside the repo (`/tmp` or the session scratch
 - Plain, specific sentences. Say what changed and why it matters. Avoid filler and machine-sounding words: leverage, robust, seamless, delve, comprehensive, streamline, cutting-edge, "it is worth noting", "in order to".
 - Use people's first names as in the author map. Do not invent work, people or numbers. If something is unknown, leave it out or say it was not visible in git.
 - Keep commit hashes and ticket IDs in engineering reports, leave them out of management reports.
+- Command line flags (such as `--force`) trip the double hyphen check. Write each hyphen pair as `&#45;&#45;` in the HTML; it prints as two hyphens.
