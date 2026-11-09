@@ -52,11 +52,9 @@ class MemoDocument
             $issues[] = ['message' => $message, 'blocking' => $blocking, 'for_head' => $forHead];
         };
 
-        // The Head of Department issues the memo: its reference and date are theirs to give (25 October 2026).
+        // The Head of Department gives the date; the reference (REF NO) is given automatically on first
+        // submission (App\Services\MemoNumbering, November 2026).
         if ($activity->isDepartmentOriginated()) {
-            if (blank(trim((string) $activity->source_reference))) {
-                $add('Give the memo reference (REF NO).', true, forHead: true);
-            }
             if ($activity->issued_on === null) {
                 $add('Give the date the memo is issued.', true, forHead: true);
             }
@@ -157,7 +155,7 @@ class MemoDocument
             'from' => $this->from($activity),
             // A Head's memo prints the date it is issued; an older memo, the date it was submitted, as before.
             'date' => $activity->issued_on ?? $submittedAt ?? today(),
-            'refNo' => $activity->source_reference ?: $activity->reference,
+            'refNo' => $activity->memo_number ?: ($activity->source_reference ?: $activity->reference),
             'period' => DsaPeriod::of($activity->start_date, max(1, (int) $activity->days)),
             'nightsBasis' => $this->settings->get('dsa_basis') !== DsaPeriod::BASIS_DAYS,
             'sections' => $this->sections($activity),

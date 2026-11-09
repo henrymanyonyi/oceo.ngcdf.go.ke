@@ -42,6 +42,7 @@ use App\Services\DocumentStore;
 use App\Services\DsaCalculator;
 use App\Services\ParticipantChecks;
 use App\Services\ParticipantReleases;
+use App\Services\ReportCompliance;
 use App\Support\FinancialYear;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
@@ -81,6 +82,9 @@ class Show extends Component
     public bool $showExtend = false;
 
     public bool $showCancel = false;
+
+    /** The CEO allows this memo through while its department's reports are overdue (ReportCompliance::override). */
+    public bool $showComplianceOverride = false;
 
     public bool $showComplete = false;
 
@@ -285,7 +289,7 @@ class Show extends Component
     private function done(?string $message = null, array $warnings = []): void
     {
         $this->reset([
-            'showDecide', 'showRecordDecision', 'showPostpone', 'showExtend', 'showCancel', 'showComplete', 'showReport', 'showReturnReport', 'showClose', 'showDiscard',
+            'showDecide', 'showRecordDecision', 'showPostpone', 'showExtend', 'showCancel', 'showComplianceOverride', 'showComplete', 'showReport', 'showReturnReport', 'showClose', 'showDiscard',
             'showForward', 'showReturnHod', 'showNote', 'reviewText', 'recommendation',
             'showAddStaff', 'showAddExternal', 'showAddGroup', 'groupLabel', 'groupCount', 'groupGrade', 'showRemoveParticipant', 'staffDepartment', 'staffOffice', 'showSelectedOnly', 'sameConflictReason', 'showDays', 'showExplain', 'overlapReason', 'staffSort', 'daysStart', 'daysEnd', 'showCost', 'showOverride', 'showLocation', 'showDirective', 'showImprest', 'showDocument', 'showInstruct', 'instruct', 'instructionNote', 'otherInstructions',
             'comment', 'memoReference', 'memoDate', 'scan', 'reason', 'newStart', 'newDays', 'extraDays', 'actualDate', 'reportReceivedOn', 'outputsAchieved',
@@ -454,6 +458,15 @@ class Show extends Component
 
         if ($this->attempt(fn () => $lifecycle->cancel($this->activity, $this->reason, $this->user()))) {
             $this->done('Activity cancelled.');
+        }
+    }
+
+    public function overrideCompliance(ReportCompliance $compliance): void
+    {
+        $this->validate(['reason' => ['required', 'string', 'max:1000']]);
+
+        if ($this->attempt(fn () => $compliance->override($this->activity, $this->reason, $this->user())) !== null) {
+            $this->done('Allowed. The department can submit this memo; your reason is on record.');
         }
     }
 

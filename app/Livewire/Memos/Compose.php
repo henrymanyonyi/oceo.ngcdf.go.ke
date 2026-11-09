@@ -204,7 +204,7 @@ class Compose extends Component
 
         return [
             ['id' => 'step-details', 'number' => 1, 'title' => 'About the activity', 'done' => $this->aboutDone, 'locked' => false],
-            ['id' => 'step-dates', 'number' => 2, 'title' => 'Reference, dates and budget', 'done' => $saved && $a->source_reference && $a->issued_on, 'locked' => ! $this->aboutDone],
+            ['id' => 'step-dates', 'number' => 2, 'title' => 'Reference, dates and budget', 'done' => $saved && $a->issued_on, 'locked' => ! $this->aboutDone],
             ['id' => 'step-place', 'number' => 3, 'title' => 'Venue and location', 'done' => $saved && $a->locations->whereNotNull('county_id')->isNotEmpty(), 'locked' => ! $saved],
             ['id' => 'step-team', 'number' => 4, 'title' => 'Team', 'done' => $saved && $a->participants->isNotEmpty(), 'locked' => ! $saved],
             ['id' => 'step-costs', 'number' => 5, 'title' => 'Costs', 'done' => $saved && $a->costs->isNotEmpty(), 'locked' => ! $saved],

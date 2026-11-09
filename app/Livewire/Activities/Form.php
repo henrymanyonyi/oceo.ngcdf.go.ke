@@ -314,9 +314,10 @@ class Form extends Component
             'organising_department_id' => ['required', 'exists:departments,id'],
             // Only a line of a budget the CEO has approved can be charged.
             'budget_line_id' => ['nullable', Rule::exists('budget_lines', 'id')->whereNull('deleted_at')->whereIn('department_budget_id', DepartmentBudget::query()->approved()->pluck('id')->all())],
-            // A Head of Department's memo needs its reference and the date it is issued (25 October 2026);
-            // a memo the Office of the CEO records keeps the date it was received.
-            'source_reference' => $this->isOffice() ? ['nullable', 'string', 'max:100'] : ['required', 'string', 'max:100', 'regex:/\S/'],
+            // A Head of Department's memo needs the date it is issued (25 October 2026); its reference is given
+            // automatically on first submission (App\Services\MemoNumbering, November 2026). A memo the Office
+            // of the CEO records keeps the external memo's own number and the date it was received.
+            'source_reference' => ['nullable', 'string', 'max:100'],
             'source_received_on' => ['nullable', 'date', 'before_or_equal:today'],
             'issued_on' => $this->isOffice() ? ['nullable', 'date'] : ['required', 'date'],
             'start_date' => ['required', 'date'],
@@ -361,9 +362,9 @@ class Form extends Component
         $data['days'] = $this->dayCount();
         $data['category_other'] = $this->categoryRequiresDetail() ? trim((string) $data['category_other']) : null;
         $fields = ['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'memo_sections', 'target_audience', 'requested_budget', 'notes', 'approval_request', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id',
-            'budget_line_id', 'source_reference', 'start_date', 'days', 'count_externals_in_per_head'];
+            'budget_line_id', 'start_date', 'days', 'count_externals_in_per_head'];
         $fields = $this->isOffice()
-            ? [...$fields, 'source_received_on', 'responsible_hod_id', 'responsible_hod_name']
+            ? [...$fields, 'source_reference', 'source_received_on', 'responsible_hod_id', 'responsible_hod_name']
             : [...$fields, 'issued_on'];
         if (isset($data['source_reference'])) {
             $data['source_reference'] = trim((string) $data['source_reference']);

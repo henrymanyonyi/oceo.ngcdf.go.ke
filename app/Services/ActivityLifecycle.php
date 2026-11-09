@@ -42,6 +42,8 @@ class ActivityLifecycle
         private DocumentStore $documents,
         private Alerts $alerts,
         private MemoDocument $memoDocument,
+        private MemoNumbering $numbering,
+        private ReportCompliance $compliance,
     ) {}
 
     /** Record the starting status of a newly created activity. */
@@ -151,6 +153,7 @@ class ActivityLifecycle
         }
 
         $this->assertReadyForReview($activity);
+        $this->compliance->assertMaySubmit($activity);
     }
 
     /**
@@ -254,6 +257,9 @@ class ActivityLifecycle
         if ($activity->status === ActivityStatus::UnderReview) {
             $this->assertMayReview($activity, $user);
         }
+
+        // A draft the Office of the CEO prepared for a department is that department's new memo too.
+        $this->compliance->assertMaySubmit($activity);
 
         $comment = trim((string) $comment);
         $viaChiefOfStaff = ReviewOffice::forUser($user) === ReviewOffice::AssistantChiefOfStaff && $this->settings->bool('acos_forwards_via_cos');
@@ -944,6 +950,10 @@ class ActivityLifecycle
 
         DB::transaction(function () use ($activity, $from, $to, $reason, $user, $actorName, $extra) {
             $this->lockAt($activity, $from);
+            // Formally registered on its first submission: numbered in the same transaction, kept for good.
+            if (in_array($to, [ActivityStatus::UnderReview, ActivityStatus::AwaitingDecision], true) && $activity->memo_number === null) {
+                $this->numbering->assign($activity);
+            }
             $activity->forceFill(['status' => $to] + $extra)->save();
             $this->history($activity, $from, $to, $reason, $user, $actorName);
         });

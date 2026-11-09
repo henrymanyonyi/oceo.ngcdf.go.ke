@@ -6,6 +6,7 @@ use App\Enums\ActivityStatus;
 use App\Enums\ReviewOffice;
 use App\Enums\SubmissionRoute;
 use App\Services\ActivityLifecycle;
+use App\Services\ReportCompliance;
 use Illuminate\Support\Facades\Auth;
 
 /**
@@ -62,6 +63,19 @@ trait SubmitsMemo
             $resubmitting => 'Resubmitted. The reviewer has been told.',
             default => 'Submitted for review. The '.$this->activity->review_office?->label().' has been told.',
         });
+    }
+
+    /**
+     * The department's overdue activity reports that hold this memo's first submission back
+     * (App\Services\ReportCompliance), for the popup. Empty once they are in or the CEO allowed it.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function overdueReports(): array
+    {
+        $compliance = app(ReportCompliance::class);
+
+        return $this->activity && $compliance->applies($this->activity) ? $compliance->describe($this->activity) : [];
     }
 
     /** After a successful submission; the memo page stays, the builder moves on to the memo page. */

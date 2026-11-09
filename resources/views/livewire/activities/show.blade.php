@@ -102,6 +102,17 @@
     @if ($reservedForCeo)
         <div class="px-4 py-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800"><i class="fa-solid fa-arrow-right-to-bracket mr-2"></i>The Head of Department sent this memo <strong>directly to the CEO</strong>. You can read it, but the Chief of Staff and the Assistant take no part in its review or decision.</div>
     @endif
+    @php $overdueReports = $s->isWithDepartment() && app(\App\Services\ReportCompliance::class)->applies($a) ? app(\App\Services\ReportCompliance::class)->describe($a) : []; @endphp
+    @if ($overdueReports !== [])
+        <div class="px-4 py-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-800 flex flex-wrap items-center gap-3">
+            <span class="flex-1 min-w-0"><i class="fa-solid fa-triangle-exclamation mr-2"></i>The department has {{ count($overdueReports) }} overdue activity {{ count($overdueReports) === 1 ? 'report' : 'reports' }} ({{ collect($overdueReports)->pluck('reference')->implode(', ') }}), so this memo cannot be submitted until {{ count($overdueReports) === 1 ? 'it is' : 'they are' }} in.</span>
+            @if ($can('compliance.override'))
+                <button type="button" wire:click="$set('showComplianceOverride', true)" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-unlock text-xs"></i>Allow this memo</button>
+            @endif
+        </div>
+    @elseif ($a->compliance_override_at)
+        <div class="px-4 py-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800"><i class="fa-solid fa-unlock mr-2"></i>Allowed by the CEO on {{ Ui::date($a->compliance_override_at) }} despite overdue reports: {{ $a->compliance_override_reason }}</div>
+    @endif
     @if ($a->isDepartmentDraft())
         <div class="px-4 py-3 rounded-lg text-sm bg-sky-50 border border-sky-200 text-sky-800"><i class="fa-solid fa-circle-info mr-2"></i>The Head of Department is still preparing this memo. It reaches you when they submit it for review.</div>
     @endif
@@ -139,7 +150,7 @@
                     <div class="lg:col-span-2 space-y-4">
                         <dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div><dt class="{{ Ui::MICRO }}">Category · type</dt><dd class="text-sm text-slate-700">{{ $a->categoryLabel() }}{{ $a->type ? ' · '.$a->type->name : '' }}</dd></div>
-                            <div><dt class="{{ Ui::MICRO }}">Source memo</dt><dd class="text-sm text-slate-700 font-numeric">{{ $a->source_reference ?: '—' }}{{ $a->source_received_on ? ', received '.Ui::date($a->source_received_on) : '' }}</dd></div>
+                            <div><dt class="{{ Ui::MICRO }}">Source memo</dt><dd class="text-sm text-slate-700 font-numeric">{{ $a->memoReference() ?: '—' }}{{ $a->source_received_on ? ', received '.Ui::date($a->source_received_on) : '' }}</dd></div>
                             <div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Objective</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->purpose }}</dd></div>
                             @if ($a->expected_outputs)<div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Expected outputs</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->expected_outputs }}</dd></div>@endif
                             @if ($a->justification)<div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Justification</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->justification }}</dd></div>@endif
@@ -573,6 +584,14 @@
         <x-slot:footer>
             <button type="button" wire:click="$set('showCancel', false)" class="{{ Ui::BTN_NEUTRAL }}">Keep it</button>
             <button type="button" wire:click="cancel" wire:loading.attr="disabled" wire:target="cancel" class="{{ Ui::BTN_DANGER }}"><i class="fa-solid fa-ban text-xs"></i>Cancel activity</button>
+        </x-slot:footer>
+    </x-ui.modal>
+
+    <x-ui.modal show="showComplianceOverride" :open="$showComplianceOverride" size="alert" icon="fa-unlock" title="Allow this memo?" subtitle="The department may submit this one memo although reports are overdue. Your reason is recorded and audited.">
+        <x-ui.field label="Reason" for="co-r" error="reason" required><textarea id="co-r" wire:model="reason" rows="2" class="{{ Ui::CONTROL }}"></textarea></x-ui.field>
+        <x-slot:footer>
+            <button type="button" wire:click="$set('showComplianceOverride', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
+            <button type="button" wire:click="overrideCompliance" wire:loading.attr="disabled" wire:target="overrideCompliance" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-unlock text-xs"></i>Allow</button>
         </x-slot:footer>
     </x-ui.modal>
 

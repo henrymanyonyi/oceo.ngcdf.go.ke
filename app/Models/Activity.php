@@ -104,6 +104,8 @@ class Activity extends Model
             'actual_end_date' => 'date',
             'report_due_on' => 'date',
             'approved_at' => 'datetime',
+            'memo_numbered_at' => 'datetime',
+            'compliance_override_at' => 'datetime',
             'submitted_at' => 'datetime',
             'commenced_at' => 'datetime',
             'completed_at' => 'datetime',
@@ -447,6 +449,12 @@ class Activity extends Model
         return $heads > 0 ? Money::divide(Money::toCents($this->cost_total), $heads) : null;
     }
 
+    /** The memo's REF NO: the number given on first submission, else the external memo's own number (older memos). */
+    public function memoReference(): ?string
+    {
+        return $this->memo_number ?: ($this->source_reference ?: null);
+    }
+
     /** Completed, past the report due date, and the department's report is not in (none yet, or returned for correction). */
     public function isReportOverdue(): bool
     {
@@ -614,6 +622,7 @@ class Activity extends Model
             ->where('title', 'like', "%{$term}%")
             ->orWhere('reference', 'like', "%{$term}%")
             ->orWhere('source_reference', 'like', "%{$term}%")
+            ->orWhere('memo_number', 'like', "%{$term}%")
             ->orWhereHas('participants', fn (Builder $p) => $p
                 ->where('external_name', 'like', "%{$term}%")
                 ->orWhereHas('staff', fn (Builder $s) => $s->where('name', 'like', "%{$term}%"))));

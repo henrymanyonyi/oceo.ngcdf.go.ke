@@ -42,6 +42,7 @@ class RolesAndPermissionsSeeder extends Seeder
         'instructions.send' => 'Instruct Finance (imprest) and Procurement (tickets) to act on an approved memo',
         'instructions.action' => 'Acknowledge and complete the CEO\'s instructions addressed to their own department',
         'workplans.prepare' => 'Prepare their own department\'s workplan and budget estimates and submit them to the CEO',
+        'compliance.override' => 'Allow one memo to be submitted while its department has overdue activity reports, with a reason',
         'staff.reassign' => 'Change an officer\'s department, designation or system access (promotion, transfer), with a reason',
     ];
 
@@ -55,7 +56,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'activities.postpone', 'activities.cancel', 'activities.execute', 'activities.close',
             'reference.manage', 'links.manage', 'reports.export', 'users.manage', 'audit.view',
             'memos.originate', 'memos.review', 'staff.add', 'budgets.prepare', 'budgets.approve',
-            'instructions.send', 'instructions.action', 'staff.reassign', 'workplans.prepare',
+            'instructions.send', 'instructions.action', 'staff.reassign', 'workplans.prepare', 'compliance.override',
         ],
         User::ROLE_CHIEF_OF_STAFF => [
             'activities.view', 'activities.manage', 'activities.submit', 'decisions.record', 'directives.manage',
