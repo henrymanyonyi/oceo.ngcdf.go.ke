@@ -50,7 +50,7 @@ class DeliverOutboundMessage implements ShouldQueue
     /** A one-time code is never kept in the log, so nobody reading it can open the memo request. */
     private function forgetCode(OutboundMessage $message): void
     {
-        if ($message->kind === 'memo_request_code') {
+        if (in_array($message->kind, ['memo_request_code', 'signing_code'], true)) {
             $message->forceFill(['body' => preg_replace('/\b\d{6}\b/', '******', $message->body)])->save();
         }
     }

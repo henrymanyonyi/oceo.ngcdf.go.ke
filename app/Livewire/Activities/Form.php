@@ -75,8 +75,6 @@ class Form extends Component
     /** The memo's "Request for approval" as typed; empty keeps the standard wording (MemoDocument). */
     public string $approval_request = '';
 
-    public string $requested_budget = '';
-
     public string $responsible_hod_id = '';
 
     public string $responsible_hod_name = '';
@@ -132,7 +130,7 @@ class Form extends Component
             $this->activity = $activity;
             $this->loadedVersion = (string) $activity->updated_at?->toIso8601String();
             // Optional columns are NULL in the database but strings here, so cast before filling.
-            foreach (['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'target_audience', 'requested_budget', 'notes', 'approval_request', 'source_reference', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id', 'budget_line_id', 'responsible_hod_id', 'responsible_hod_name'] as $key) {
+            foreach (['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'target_audience', 'notes', 'approval_request', 'source_reference', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id', 'budget_line_id', 'responsible_hod_id', 'responsible_hod_name'] as $key) {
                 $this->{$key} = (string) ($activity->{$key} ?? '');
             }
             $this->memo_sections = collect((array) $activity->memo_sections)->map(fn ($s) => ['heading' => (string) ($s['heading'] ?? ''), 'body' => (string) ($s['body'] ?? '')])->values()->all();
@@ -201,6 +199,38 @@ class Form extends Component
     public function isOffice(): bool
     {
         return Auth::user()->can('activities.manage');
+    }
+
+    /**
+     * The memo's own unit for its budget: the region of a Regional Coordinator (or of the regional memo
+     * being edited), else none (the department's own budget).
+     */
+    private function unitRegionId(): ?int
+    {
+        if ($this->activity?->originating_region_id) {
+            return (int) $this->activity->originating_region_id;
+        }
+        $user = Auth::user();
+
+        return ! $this->isOffice() && $user->isRegionalCoordinator() ? (int) $user->region_id : null;
+    }
+
+    /**
+     * Choosing the workplan activity a memo carries out fills what the memo has not said yet: the
+     * title, the purpose (the objective) and the expected outputs (the deliverables), all still editable.
+     */
+    public function updatedBudgetLineId(string $value): void
+    {
+        $line = $value !== '' ? BudgetLine::query()->approved()->find((int) $value) : null;
+        if (! $line) {
+            return;
+        }
+
+        foreach (['title' => $line->name, 'purpose' => $line->objective, 'expected_outputs' => $line->deliverables] as $field => $text) {
+            if (trim((string) $this->{$field}) === '' && filled($text)) {
+                $this->{$field} = (string) $text;
+            }
+        }
     }
 
     public function updatedOrganisingDepartmentId(): void
@@ -302,7 +332,6 @@ class Form extends Component
             'memo_sections.*.heading' => ['required', 'string', 'max:150'],
             'memo_sections.*.body' => ['required', 'string', 'max:5000'],
             'target_audience' => ['nullable', 'string', 'max:255'],
-            'requested_budget' => ['nullable', 'numeric', 'min:0', 'max:9999999999999', 'regex:/^\d+(\.\d{1,2})?$/'],
             'responsible_hod_id' => ['nullable', 'exists:users,id'],
             'responsible_hod_name' => ['nullable', 'string', 'max:255'],
             'notes' => ['nullable', 'string', 'max:5000'],
@@ -314,9 +343,10 @@ class Form extends Component
             'organising_department_id' => ['required', 'exists:departments,id'],
             // Only a line of a budget the CEO has approved can be charged.
             'budget_line_id' => ['nullable', Rule::exists('budget_lines', 'id')->whereNull('deleted_at')->whereIn('department_budget_id', DepartmentBudget::query()->approved()->pluck('id')->all())],
-            // A Head of Department's memo needs its reference and the date it is issued (25 October 2026);
-            // a memo the Office of the CEO records keeps the date it was received.
-            'source_reference' => $this->isOffice() ? ['nullable', 'string', 'max:100'] : ['required', 'string', 'max:100', 'regex:/\S/'],
+            // A Head of Department's memo needs the date it is issued (25 October 2026); its reference is given
+            // automatically on first submission (App\Services\MemoNumbering, November 2026). A memo the Office
+            // of the CEO records keeps the external memo's own number and the date it was received.
+            'source_reference' => ['nullable', 'string', 'max:100'],
             'source_received_on' => ['nullable', 'date', 'before_or_equal:today'],
             'issued_on' => $this->isOffice() ? ['nullable', 'date'] : ['required', 'date'],
             'start_date' => ['required', 'date'],
@@ -338,7 +368,7 @@ class Form extends Component
     /** @return array<string, string> */
     protected function validationAttributes(): array
     {
-        return ['purpose' => 'purpose', 'source_reference' => 'memo reference', 'issued_on' => 'date issued', 'organising_department_id' => 'requesting department', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'end_date' => 'expected completion date', 'start_date' => 'planned start date', 'memo' => 'source document', 'justification' => 'introduction and justification', 'risks' => 'key risks', 'memo_sections.*.heading' => 'section heading', 'memo_sections.*.body' => 'section text', 'requested_budget' => 'estimated budget', 'target_audience' => 'participants and stakeholders', 'expected_outputs' => 'expected outcomes and deliverables', 'activity_type_id' => 'activity type', 'notes' => 'notes', 'approval_request' => 'request for approval', 'responsible_hod_id' => 'Head of Department', 'responsible_hod_name' => 'Head of Department'];
+        return ['purpose' => 'purpose', 'source_reference' => 'memo reference', 'issued_on' => 'date issued', 'organising_department_id' => 'requesting department', 'activity_category_id' => 'category', 'category_other' => 'category (other)', 'end_date' => 'expected completion date', 'start_date' => 'planned start date', 'memo' => 'source document', 'justification' => 'introduction and justification', 'risks' => 'key risks', 'memo_sections.*.heading' => 'section heading', 'memo_sections.*.body' => 'section text', 'target_audience' => 'participants and stakeholders', 'expected_outputs' => 'expected outcomes and deliverables', 'activity_type_id' => 'activity type', 'notes' => 'notes', 'approval_request' => 'request for approval', 'responsible_hod_id' => 'Head of Department', 'responsible_hod_name' => 'Head of Department'];
     }
 
     public function save(ActivityEditor $editor, DocumentStore $documents): void
@@ -360,10 +390,10 @@ class Form extends Component
 
         $data['days'] = $this->dayCount();
         $data['category_other'] = $this->categoryRequiresDetail() ? trim((string) $data['category_other']) : null;
-        $fields = ['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'memo_sections', 'target_audience', 'requested_budget', 'notes', 'approval_request', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id',
-            'budget_line_id', 'source_reference', 'start_date', 'days', 'count_externals_in_per_head'];
+        $fields = ['title', 'purpose', 'expected_outputs', 'justification', 'risks', 'memo_sections', 'target_audience', 'notes', 'approval_request', 'activity_category_id', 'category_other', 'activity_type_id', 'organising_department_id',
+            'budget_line_id', 'start_date', 'days', 'count_externals_in_per_head'];
         $fields = $this->isOffice()
-            ? [...$fields, 'source_received_on', 'responsible_hod_id', 'responsible_hod_name']
+            ? [...$fields, 'source_reference', 'source_received_on', 'responsible_hod_id', 'responsible_hod_name']
             : [...$fields, 'issued_on'];
         if (isset($data['source_reference'])) {
             $data['source_reference'] = trim((string) $data['source_reference']);
@@ -436,7 +466,7 @@ class Form extends Component
             ['id' => 'step-details', 'number' => 1, 'title' => 'About the activity', 'done' => $filled('title', 'activity_category_id', 'purpose'), 'locked' => false],
             ['id' => 'step-source', 'number' => 2, 'title' => 'Source', 'done' => $filled('organising_department_id'), 'locked' => false],
             ['id' => 'step-dates', 'number' => 3, 'title' => 'Dates and location', 'done' => $filled('start_date', 'end_date'), 'locked' => false],
-            ['id' => 'step-budget', 'number' => 4, 'title' => 'Budget', 'done' => $filled('requested_budget') || $filled('budget_line_id'), 'locked' => false],
+            ['id' => 'step-budget', 'number' => 4, 'title' => 'Budget', 'done' => $filled('budget_line_id') || ($saved && $this->activity->costs()->exists()), 'locked' => false],
             ['id' => 'step-team', 'number' => 5, 'title' => 'Team and costs', 'done' => $saved && $this->activity->participants()->exists(), 'locked' => ! $saved],
         ];
     }
@@ -446,6 +476,7 @@ class Form extends Component
         $start = rescue(fn () => $this->start_date ? Carbon::parse($this->start_date) : null, null, false);
         $days = $this->dayCount();
         $fy = $start ? FinancialYear::for($start)->label() : FinancialYear::current()->label();
+        $regionId = $this->unitRegionId();
 
         return view('livewire.activities.form', [
             'period' => $start && $days ? DsaPeriod::of($start, $days) : null,
@@ -460,8 +491,15 @@ class Form extends Component
             'office' => $this->isOffice(),
             'pageSteps' => $this->embedded ? [] : $this->pageSteps(),
             'fullAbout' => $this->requiresFullAbout(),
-            'budget' => $this->organising_department_id ? $budget->forDepartment(FinancialYear::fromLabel($fy), (int) $this->organising_department_id) : null,
-            'budgetLines' => BudgetLine::query()->approved()->where('financial_year', $fy)->when($this->organising_department_id, fn ($q, $id) => $q->where('department_id', $id))->orderBy('name')->get(),
+            'budget' => $regionId
+                ? $budget->forRegion(FinancialYear::fromLabel($fy), $regionId)
+                : ($this->organising_department_id ? $budget->forDepartment(FinancialYear::fromLabel($fy), (int) $this->organising_department_id) : null),
+            // Only the memo's own unit's approved lines: the region's workplan, or the department's own budget.
+            'budgetLines' => BudgetLine::query()->approved()->where('financial_year', $fy)
+                ->when($this->organising_department_id, fn ($q, $id) => $q->where('department_id', $id))
+                ->whereHas('budget', fn ($q) => $regionId ? $q->where('region_id', $regionId) : $q->whereNull('region_id'))
+                ->orderBy('name')->get(),
+            'regionalMemo' => $regionId !== null,
             'regions' => Region::query()->orderBy('name')->get(['id', 'name']),
             'counties' => County::query()->when($this->region_id, fn ($q, $id) => $q->whereHas('constituencies', fn ($c) => $c->where('region_id', $id)))->orderBy('name')->get(['id', 'name']),
             'constituencies' => $this->county_id ? Constituency::query()->where('county_id', $this->county_id)->orderBy('name')->get(['id', 'name']) : collect(),

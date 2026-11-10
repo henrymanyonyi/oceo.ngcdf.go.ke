@@ -9,7 +9,6 @@ use App\Livewire\Memos\Show as MemoShow;
 use App\Livewire\Users;
 use App\Models\AccessLog;
 use App\Models\Activity;
-use App\Models\ActivityCategory;
 use App\Models\Department;
 use App\Models\User;
 use App\Services\ActivityLifecycle;
@@ -57,38 +56,38 @@ it('creates a memo through the form for the Head of Department\'s own department
         ->assertSet('organising_department_id', (string) $this->ict->id)
         ->set('activity_category_id', memoAbout()['activity_category_id'])
         ->fill(memoAbout())
-        ->set('requested_budget', '250000')
         ->set('organising_department_id', (string) $this->other->id)
         ->set('start_date', today()->addDays(20)->toDateString())
         ->set('venue', 'NGCDF Board headquarters')
         ->set('memo', UploadedFile::fake()->create('memo.pdf', 50, 'application/pdf'))
         ->assertSee('Date issued')->assertDontSee('Date received')->assertSet('issued_on', today()->toDateString())
-        ->set('source_reference', '   ')
-        ->call('save')
-        ->assertHasErrors(['source_reference'])
-        ->set('source_reference', 'NG-CDF BOARD/ICT/004/2026')
+        ->assertSee('Given automatically when you submit the memo.')
+        ->set('source_reference', 'TYPED/BY/HAND')
         ->call('save')
         ->assertHasNoErrors()
         ->assertRedirect(route('memos.show', Activity::sole()));
 
     expect(Activity::sole())
-        ->source_reference->toBe('NG-CDF BOARD/ICT/004/2026')
+        ->source_reference->toBeNull()
+        ->memo_number->toBeNull()
         ->issued_on->toDateString()->toBe(today()->toDateString())
         ->source_received_on->toBeNull()
         ->organising_department_id->toBe($this->ict->id)
         ->responsible_hod_id->toBe($this->hod->id)
-        ->requested_budget->toBe('250000.00')
+        ->requested_budget->toBeNull()
         ->target_audience->toBe('ICT staff and invited departmental representatives');
 });
 
-it('rejects a budget that is not an amount', function () {
-    Livewire::actingAs($this->hod)->test(Form::class)
-        ->set('title', 'x')->set('purpose', 'x')
-        ->set('activity_category_id', (string) ActivityCategory::query()->value('id'))
-        ->set('start_date', today()->addDays(20)->toDateString())
-        ->set('requested_budget', '12,5x')
-        ->call('save')
-        ->assertHasErrors(['requested_budget']);
+it('no longer asks for an estimated budget on a memo, and keeps an older memo\'s estimate when it is saved', function () {
+    $memo = departmentMemo($this->hod);
+
+    Livewire::actingAs($this->hod)->test(Form::class)->assertDontSee('Estimated budget (KES)');
+    Livewire::actingAs($this->hod)->test(Form::class, ['activity' => $memo])
+        ->set('activity_category_id', memoAbout()['activity_category_id'])
+        ->fill(memoAbout(['title' => 'Renamed']))
+        ->call('save')->assertHasNoErrors();
+
+    expect($memo->fresh())->title->toBe('Renamed')->requested_budget->toBe('250000.00');
 });
 
 it('refuses to save over someone else\'s later change', function () {

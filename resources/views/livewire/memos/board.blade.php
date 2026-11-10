@@ -9,7 +9,7 @@
     $subtitle = match ($perspective) {
         MemoTracker::PERSPECTIVE_CEO => 'Memos forwarded for your approval and authorisation, and your decisions.',
         MemoTracker::PERSPECTIVE_REVIEWER => 'Memos from Heads of Department to review, return for correction or forward to the CEO.',
-        default => ($department?->name ?? 'Your department').': prepare memos, submit them for review and follow them to the CEO\'s decision.',
+        default => ($region ? $region->name.': prepare memos from your region\'s approved workplan' : ($department?->name ?? 'Your department').': prepare memos').', submit them for review and follow them to the CEO\'s decision.',
     };
 @endphp
 
@@ -58,7 +58,7 @@
     @if ($budget)
         @php $kes = fn (?int $c) => $c === null ? 'Not set' : Money::format($c); @endphp
         <x-slot:stats>
-            <x-ui.stat :index="0" icon="fa-wallet" :label="'Budget FY '.$budget['financial_year']" :value="$kes($budget['allocation'])" :money="$budget['allocation'] !== null" :sub="$budget['allocation'] === null ? 'No allocation recorded yet' : 'your department\'s allocation'" />
+            <x-ui.stat :index="0" icon="fa-wallet" :label="'Budget FY '.$budget['financial_year']" :value="$kes($budget['allocation'])" :money="$budget['allocation'] !== null" :sub="$budget['allocation'] === null ? 'No allocation recorded yet' : ($region ? 'your region\'s workplan' : 'your department\'s allocation')" />
             <x-ui.stat :index="1" icon="fa-receipt" label="Spent" :value="$kes($budget['spent'])" money tone="amber" :sub="'from Finance returns'.($budget['spent_percent'] !== null ? ' · '.$budget['spent_percent'].'%' : '')" />
             <x-ui.stat :index="2" icon="fa-file-signature" label="Committed" :value="$kes($budget['committed'])" money tone="purple" :sub="$budget['approved_count'].' approved '.Str::plural('memo', $budget['approved_count']).' not yet spent'" />
             <x-ui.stat :index="3" icon="fa-scale-balanced" label="Available balance" :value="$kes($budget['balance'])" :money="$budget['balance'] !== null" :tone="($budget['balance'] ?? 0) < 0 ? 'red' : 'blue'" :sub="$budget['pending_count'] ? 'KES '.Money::format($budget['pending']).' more awaiting decision' : 'nothing awaiting decision'" />
@@ -130,7 +130,7 @@
                                 </div>
                                 <p class="text-[15px] font-semibold text-slate-800 mt-1">{{ $a->title }}</p>
                                 <p class="text-[12px] text-slate-500 mt-0.5">
-                                    {{ $a->organisingDepartment?->name ?? 'No department' }}
+                                    {{ $a->originatingRegion?->name ?? $a->organisingDepartment?->name ?? 'No department' }}
                                     @if ($a->responsibleHodLabel()) · Head of Department: {{ $a->responsibleHodLabel() }}@endif
                                     @if ($a->isPreparedOnBehalf() && $a->creator) · prepared by {{ $a->creator->name }}@endif
                                     · {{ Ui::dateRange($a->start_date, $a->end_date) }}
@@ -164,7 +164,7 @@
                 <p class="text-[11px] mt-1">It works only for them: it asks for a code sent to their email or mobile.</p>
             </div>
         @else
-            <x-ui.field label="Officer" for="rq-s" error="requestStaffId" required hint="Search the staff list by name or PF number. Officers of your department come first.">
+            <x-ui.field label="Officer" for="rq-s" error="requestStaffId" required hint="Search your department's officers by name or PF number.">
                 @if ($requestPicked)
                     <div class="flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
                         <p class="text-[13px]"><span class="font-semibold text-slate-800">{{ $requestPicked->name }}</span> <span class="text-slate-500">· {{ $requestPicked->department?->name ?? 'No department' }}</span><span class="block text-[11px] text-slate-500">{{ $requestPicked->email ?: 'No email' }} · {{ $requestPicked->phone ?: 'No mobile' }}</span></p>

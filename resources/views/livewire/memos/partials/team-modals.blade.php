@@ -1,12 +1,11 @@
 @use('App\Support\Ui')
     {{-- Add officers --}}
-    <x-ui.modal show="showAdd" :open="$showAdd" size="large" icon="fa-user-plus" title="Add officers" subtitle="Tick the officers taking part. If someone is not on the list, add them to the staff list here.">
+    <x-ui.modal show="showAdd" :open="$showAdd" size="large" icon="fa-user-plus" title="Add officers" subtitle="Search for each officer taking part by name or PF number, from any department, and tick them. If someone is not on the staff list, add them here.">
         <div class="flex flex-col sm:flex-row gap-3">
             <div class="relative flex items-center flex-1">
                 <i class="fa-solid fa-magnifying-glass absolute left-3 text-gray-400 text-xs pointer-events-none"></i>
                 <input type="search" wire:model.live.debounce.300ms="staffSearch" placeholder="Search name or PF number…" aria-label="Search staff" class="{{ Ui::CONTROL }} pl-9">
             </div>
-            <select wire:model.live="staffDepartment" class="{{ $sel }} sm:w-56" aria-label="Department"><option value="">All departments</option>@foreach ($departments as $d)<option value="{{ $d->id }}">{{ $d->name }}</option>@endforeach</select>
         </div>
         <x-memo.role-select id="add-role" class="sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0" />
         @error('selectedStaff')<p class="text-xs text-red-600" role="alert">{{ $message }}</p>@enderror
@@ -51,31 +50,30 @@
                     </label>
                 </div>
             @empty
-                <p class="px-3 py-6 text-center text-[13px] text-slate-400">No officer matches. Check the spelling, or add the officer to the staff list.</p>
+                <p class="px-3 py-6 text-center text-[13px] text-slate-400">
+                    @if (mb_strlen(trim($staffSearch)) < \App\Services\StaffVisibility::MIN_SEARCH)
+                        <i class="fa-solid fa-magnifying-glass mr-1"></i>Type at least two letters of the officer's name or PF number.
+                    @else
+                        No officer matches. Check the spelling, or add the officer to the staff list below.
+                    @endif
+                </p>
             @endforelse
         </div>
-        <button type="button" wire:click="openStaffForm" class="{{ Ui::BTN_TINT }}"><i class="fa-solid fa-id-badge text-[9px]"></i>Officer not on the list? Add them to the staff list</button>
+        @can('staff.add')
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="text-[12px] text-slate-500">Officer not on the list?</span>
+                <button type="button" wire:click="openStaffForm" class="{{ Ui::BTN_TINT }}"><i class="fa-solid fa-id-badge text-[9px]"></i>Add an officer</button>
+                <button type="button" wire:click="openStaffImport" class="{{ Ui::BTN_TINT }}"><i class="fa-solid fa-file-import text-[9px]"></i>Import a list</button>
+            </div>
+        @endcan
         <x-slot:footer>
             <button type="button" wire:click="$set('showAdd', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
             <button type="button" wire:click="addStaff" wire:loading.attr="disabled" wire:target="addStaff" class="{{ Ui::BTN_PRIMARY }}" @disabled($selectedIds === [])><i class="fa-solid fa-user-plus text-xs"></i>Add {{ count($selectedIds) ?: '' }} to team</button>
         </x-slot:footer>
     </x-ui.modal>
 
-    {{-- Add an officer missing from the staff list --}}
-    <x-ui.modal show="showStaffForm" :open="$showStaffForm" icon="fa-id-badge" title="Add an officer to the staff list" subtitle="Use the details on the officer's HR record. You can correct officers you add from the Staff list page.">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <x-ui.field label="PF number" for="ns-pf" error="staffNumber" required><input id="ns-pf" type="text" wire:model="staffNumber" maxlength="30" class="{{ Ui::CONTROL }} font-numeric"></x-ui.field>
-            <x-ui.field label="Name" for="ns-n" error="staffName" required><input id="ns-n" type="text" wire:model="staffName" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
-            <x-ui.field label="Department" for="ns-d" error="staffDepartmentId" required><select id="ns-d" wire:model="staffDepartmentId" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($departments as $d)<option value="{{ $d->id }}">{{ $d->name }}</option>@endforeach</select></x-ui.field>
-            <x-ui.field label="Designation" for="ns-des" error="staffDesignationId"><select id="ns-des" wire:model="staffDesignationId" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($designations as $d)<option value="{{ $d->id }}">{{ $d->name }}</option>@endforeach</select></x-ui.field>
-            <x-ui.field label="Job grade" for="ns-g" error="staffJobGrade" hint="The scale from the HR register (1 to 10); it sets the officer's DSA rate."><input id="ns-g" type="text" wire:model="staffJobGrade" maxlength="20" class="{{ Ui::CONTROL }}"></x-ui.field>
-            <x-ui.field label="Duty station" for="ns-o" error="staffOfficeId"><select id="ns-o" wire:model="staffOfficeId" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($offices as $o)<option value="{{ $o->id }}">{{ $o->name }}</option>@endforeach</select></x-ui.field>
-        </div>
-        <x-slot:footer>
-            <button type="button" wire:click="$set('showStaffForm', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
-            <button type="button" wire:click="saveStaff" wire:loading.attr="disabled" wire:target="saveStaff" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-floppy-disk text-xs"></i>Add to staff list</button>
-        </x-slot:footer>
-    </x-ui.modal>
+    {{-- Add or import officers missing from the staff list --}}
+    @include('livewire.partials.missing-officers')
 
     {{-- A group by number, without names --}}
     <x-ui.modal show="showGroup" :open="$showGroup" size="slim" icon="fa-people-group" title="Add a group by number" subtitle="Officers who take part without being named, for example 10 Fund Account Managers. DSA is their scale's rate for each of them.">
@@ -123,16 +121,10 @@
     </x-ui.modal>
 
     {{-- A planned cost line --}}
-    <x-ui.modal show="showCost" :open="$showCost" size="medium" icon="fa-coins" :title="$costId ? 'Edit cost line' : 'Add a cost line'" subtitle="For travel, venue, meals, materials and other costs. DSA and external participants' payments are calculated for you.">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <x-ui.field label="Cost type" for="c-cat" error="costCategoryId" required><select id="c-cat" wire:model="costCategoryId" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($costCategories as $cc)<option value="{{ $cc->id }}">{{ $cc->name }}</option>@endforeach</select></x-ui.field>
-        <x-ui.field label="For" for="c-p" error="costParticipantId"><select id="c-p" wire:model="costParticipantId" class="{{ $sel }}"><option value="">The whole activity</option>@foreach ($a->participants as $p)<option value="{{ $p->id }}">{{ $p->displayName() }}</option>@endforeach</select></x-ui.field>
-        <x-ui.field label="Travel mode" for="c-t" error="costTravelMode"><select id="c-t" wire:model="costTravelMode" class="{{ $sel }}"><option value="">Not travel</option>@foreach ($travelModes as $t)<option value="{{ $t->value }}">{{ $t->label() }}</option>@endforeach</select></x-ui.field>
-        <x-ui.field label="Description" for="c-d" error="costDescription"><input id="c-d" type="text" wire:model="costDescription" maxlength="255" class="{{ Ui::CONTROL }}" placeholder="e.g. Conference room hire, one day"></x-ui.field>
-        </div>
-        <x-memo.cost-method :headcount="$a->staff_count + $a->external_count" />
+    <x-ui.modal show="showCost" :open="$showCost" size="medium" icon="fa-coins" :title="$costId ? 'Edit cost line' : 'Add cost lines'" subtitle="Travel, meals, venue, materials and other costs, per person, per person per day or for the whole activity. Add as many lines as you need, then save them together. DSA and external participants' payments are calculated for you.">
+        <x-memo.cost-lines :participants="$a->participants" :headcount="$a->staff_count + $a->external_count" :days="(int) $a->days" :options="$this->costTypeOptions()" :queue="$costQueue" :editing="(bool) $costId" />
         <x-slot:footer>
             <button type="button" wire:click="$set('showCost', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
-            <button type="button" wire:click="saveCost" wire:loading.attr="disabled" wire:target="saveCost" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-floppy-disk text-xs"></i>Save</button>
+            <button type="button" wire:click="saveCost" wire:loading.attr="disabled" wire:target="saveCost" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-floppy-disk text-xs"></i>{{ $costId || $costQueue === [] ? 'Save' : 'Save all lines' }}</button>
         </x-slot:footer>
     </x-ui.modal>

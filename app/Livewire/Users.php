@@ -7,6 +7,7 @@ use App\Models\Department;
 use App\Models\Staff;
 use App\Models\User;
 use App\Services\AuditLogger;
+use App\Services\StaffVisibility;
 use App\Support\MobileNumber;
 use Closure;
 use Illuminate\Support\Facades\Auth;
@@ -75,7 +76,8 @@ class Users extends Component
 
     public function openCreate(string $role): void
     {
-        abort_unless(array_key_exists($role, User::ROLES), 404);
+        // A Regional Coordinator is appointed from the staff list (their duty station gives the region).
+        abort_unless(array_key_exists($role, User::ROLES) && ! in_array($role, User::REGIONAL_ROLES, true), 404);
         $this->role = $role;
         $this->reset(['name', 'email', 'department_id', 'phone', 'staff_id', 'staffSearch', 'contactUserId']);
         $this->resetErrorBag();
@@ -143,7 +145,7 @@ class Users extends Component
     {
         $this->guard();
         $this->validate([
-            'role' => ['required', 'in:'.implode(',', array_keys(User::ROLES))],
+            'role' => ['required', 'in:'.implode(',', array_keys(collect(User::ROLES)->except(User::REGIONAL_ROLES)->all()))],
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'department_id' => [$this->isDepartmental($this->role) ? 'required' : 'nullable', 'exists:departments,id'],
@@ -202,8 +204,12 @@ class Users extends Component
         $this->guard();
         $user = User::query()->findOrFail($id);
 
-        if ($this->activeHolder($user->roleName(), $this->isDepartmental($user->roleName()) ? $user->department_id : null, $id)) {
-            $this->toast($this->isDepartmental($user->roleName()) ? 'Another active account is already Head of this department.' : 'Another active account already holds this role.', 'error');
+        if ($this->activeHolder($user->roleName(), $this->isDepartmental($user->roleName()) ? $user->department_id : null, $id, $user->region_id)) {
+            $this->toast(match (true) {
+                $this->isDepartmental($user->roleName()) => 'Another active account is already Head of this department.',
+                $this->isRegional($user->roleName()) => 'Another active account is already Regional Coordinator of this region.',
+                default => 'Another active account already holds this role.',
+            }, 'error');
 
             return;
         }
@@ -244,11 +250,17 @@ class Users extends Component
         return in_array($role, User::DEPARTMENTAL_ROLES, true);
     }
 
-    /** The active account holding the role (in the department, for a departmental role). */
-    private function activeHolder(?string $role, ?int $departmentId = null, ?int $except = null): ?User
+    private function isRegional(?string $role): bool
+    {
+        return in_array($role, User::REGIONAL_ROLES, true);
+    }
+
+    /** The active account holding the role (in the department, for a departmental role; in the region, for a regional one). */
+    private function activeHolder(?string $role, ?int $departmentId = null, ?int $except = null, ?int $regionId = null): ?User
     {
         return User::query()->role($role)->where('is_active', true)
             ->when($this->isDepartmental($role), fn ($q) => $q->where('department_id', $departmentId))
+            ->when($this->isRegional($role), fn ($q) => $q->where('region_id', $regionId))
             ->when($except, fn ($q, $id) => $q->whereKeyNot($id))
             ->first();
     }
@@ -317,15 +329,16 @@ class Users extends Component
 
     public function render(): View
     {
-        $users = User::query()->with(['roles', 'department', 'staff'])->orderByDesc('is_active')->orderBy('name')->get();
+        $users = User::query()->with(['roles', 'department', 'region', 'staff'])->orderByDesc('is_active')->orderBy('name')->get();
         $search = trim($this->staffSearch);
 
         return view('livewire.users', [
             'heads' => $users->filter(fn (User $u) => $u->roleName() === User::ROLE_HOD)->sortBy([['is_active', 'desc'], [fn ($a, $b) => strcmp((string) $a->department?->name, (string) $b->department?->name)]])->values(),
+            'coordinators' => $users->filter(fn (User $u) => $u->roleName() === User::ROLE_RC)->sortBy([['is_active', 'desc'], [fn ($a, $b) => strcmp((string) $a->region?->name, (string) $b->region?->name)]])->values(),
             'departments' => Department::query()->active()->ordered()->get(['id', 'name']),
-            'staffMatches' => mb_strlen($search) >= 2 ? Staff::query()->active()->search($search)->with('department')->orderBy('name')->limit(8)->get() : collect(),
+            'staffMatches' => mb_strlen($search) >= 2 ? app(StaffVisibility::class)->forPicker(Staff::query()->active(), Auth::user(), $search)->with('department')->orderBy('name')->limit(8)->get() : collect(),
             'pickedStaff' => $this->staff_id ? Staff::query()->with('department')->find($this->staff_id) : null,
-            'slots' => collect(User::ROLES)->except(User::DEPARTMENTAL_ROLES)->map(fn ($label, $role) => [
+            'slots' => collect(User::ROLES)->except([...User::DEPARTMENTAL_ROLES, ...User::REGIONAL_ROLES])->map(fn ($label, $role) => [
                 'label' => $label,
                 'active' => $users->first(fn (User $u) => $u->is_active && $u->roleName() === $role),
                 'former' => $users->filter(fn (User $u) => ! $u->is_active && $u->roleName() === $role),

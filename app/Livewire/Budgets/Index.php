@@ -6,6 +6,8 @@ use App\Enums\BudgetStatus;
 use App\Livewire\Concerns\RunsActions;
 use App\Models\Department;
 use App\Models\DepartmentBudget;
+use App\Models\Region;
+use App\Models\User;
 use App\Services\Budgeting;
 use App\Services\BudgetPosition;
 use App\Support\FinancialYear;
@@ -41,6 +43,9 @@ class Index extends Component
 
     public string $prepareDepartment = '';
 
+    /** A region's workplan (Regional Coordinator, or the Office of the CEO for a region); '' for a department's own budget. */
+    public string $prepareRegion = '';
+
     public string $prepareYear = '';
 
     public string $prepareNotes = '';
@@ -59,13 +64,22 @@ class Index extends Component
     {
         $user = Auth::user();
 
-        return $user->canAny(['budgets.prepare', 'budgets.approve']) ? null : (int) $user->department_id;
+        return $user->canAny(['budgets.prepare', 'budgets.approve']) || $user->isRegionalCoordinator() ? null : (int) $user->department_id;
     }
 
-    public function openPrepare(?int $departmentId = null): void
+    /** A Regional Coordinator's own region: they see and prepare only its workplan. */
+    private function ownRegion(): ?int
+    {
+        $user = Auth::user();
+
+        return ! $user->canAny(['budgets.prepare', 'budgets.approve']) && $user->isRegionalCoordinator() ? (int) $user->region_id : null;
+    }
+
+    public function openPrepare(?int $departmentId = null, ?int $regionId = null): void
     {
         $this->resetValidation();
-        $this->prepareDepartment = (string) ($this->ownDepartment() ?? $departmentId ?? '');
+        $this->prepareRegion = (string) ($this->ownRegion() ?? $regionId ?? '');
+        $this->prepareDepartment = (string) ($this->ownDepartment() ?? ($this->prepareRegion !== '' ? $this->regionDepartment((int) $this->prepareRegion) : $departmentId) ?? '');
         $this->prepareYear = $this->fy;
         $this->prepareNotes = '';
         $this->prepareFile = null;
@@ -74,14 +88,19 @@ class Index extends Component
 
     public function prepare(Budgeting $budgeting): void
     {
+        if ($region = $this->ownRegion()) {
+            $this->prepareRegion = (string) $region;
+            $this->prepareDepartment = (string) Auth::user()->department_id;
+        }
         $this->validate([
+            'prepareRegion' => ['nullable', 'exists:regions,id'],
             'prepareDepartment' => ['required', 'exists:departments,id'],
             'prepareYear' => ['required', 'regex:/^\d{4}\/\d{2}$/'],
             'prepareNotes' => ['nullable', 'string', 'max:2000'],
             'prepareFile' => ['nullable', 'file', 'mimes:xlsx,xls,csv,txt', 'max:'.config('activities.max_list_kb')],
-        ], [], ['prepareDepartment' => 'department', 'prepareYear' => 'financial year', 'prepareNotes' => 'notes', 'prepareFile' => 'workplan file']);
+        ], ['prepareDepartment.required' => 'Choose the department. A region\'s workplan is under its Regional Coordinator\'s department; give the region a coordinator first.'], ['prepareDepartment' => 'department', 'prepareYear' => 'financial year', 'prepareNotes' => 'notes', 'prepareFile' => 'workplan file']);
 
-        $budget = $this->attempt(fn () => $budgeting->create($this->ownDepartment() ?? (int) $this->prepareDepartment, $this->prepareYear, $this->prepareNotes, Auth::user()));
+        $budget = $this->attempt(fn () => $budgeting->create($this->ownDepartment() ?? (int) $this->prepareDepartment, $this->prepareYear, $this->prepareNotes, Auth::user(), regionId: $this->prepareRegion !== '' ? (int) $this->prepareRegion : null));
         if (! $budget instanceof DepartmentBudget) {
             return;
         }
@@ -98,28 +117,62 @@ class Index extends Component
         $this->redirectRoute('budgets.show', $budget, navigate: true);
     }
 
+    /** The department a region's workplan sits under: its active Regional Coordinator's. */
+    private function regionDepartment(int $regionId): ?int
+    {
+        return User::query()->role(User::ROLE_RC)->where('is_active', true)->where('region_id', $regionId)->value('department_id');
+    }
+
     public function render(BudgetPosition $position, Budgeting $budgeting): View
     {
         $fy = FinancialYear::fromLabel($this->fy);
         $own = $this->ownDepartment();
-        $budgets = DepartmentBudget::query()->where('financial_year', $fy->label())->when($own, fn ($q, $id) => $q->where('department_id', $id))
+        $ownRegion = $this->ownRegion();
+        $office = ! $own && ! $ownRegion;
+
+        // Departments' own budgets (a region's workplan is listed with the regions, never under its department).
+        $budgets = $ownRegion ? collect() : DepartmentBudget::query()->where('financial_year', $fy->label())->whereNull('region_id')->when($own, fn ($q, $id) => $q->where('department_id', $id))
             ->withCount('lines')->with(['preparer'])->get()->keyBy('department_id');
-        $yearFigures = $position->forYear($fy)->when($own, fn ($rows, $id) => $rows->filter(fn (array $r) => $r['department']?->id === $id));
+        $yearFigures = $ownRegion ? collect() : $position->forYear($fy, $own, includeRegional: false);
         $figures = $yearFigures->keyBy(fn (array $r) => $r['department']?->id);
 
-        $rows = Department::query()->active()->when($own, fn ($q, $id) => $q->whereKey($id))->ordered()->get()
+        $departmentRows = $ownRegion ? collect() : Department::query()->active()->when($own, fn ($q, $id) => $q->whereKey($id))->ordered()->get()
             ->merge(Department::query()->whereIn('id', $budgets->keys())->get())
             ->unique('id')
             ->map(function (Department $d) use ($budgets, $figures, $budgeting) {
                 $budget = $budgets->get($d->id);
 
                 return [
+                    'key' => 'd-'.$d->id,
+                    'name' => $d->name,
                     'department' => $d,
+                    'region' => null,
                     'budget' => $budget,
                     'totals' => $budget ? $budgeting->totals($budget) : null,
                     'position' => $figures->get($d->id),
                 ];
-            })
+            });
+
+        // Regions' workplans: every region for the Office of the CEO, their own for a Regional Coordinator.
+        $regionBudgets = $own ? collect() : DepartmentBudget::query()->where('financial_year', $fy->label())->whereNotNull('region_id')->when($ownRegion, fn ($q, $id) => $q->where('region_id', $id))
+            ->withCount('lines')->with(['preparer', 'department'])->get()->keyBy('region_id');
+        $regionFigures = $own ? collect() : $position->forRegions($fy, $ownRegion);
+        $regionRows = $own ? collect() : Region::query()->when($ownRegion, fn ($q, $id) => $q->whereKey($id), fn ($q) => $q->where(fn ($r) => $r->where('is_active', true)->orWhereIn('id', $regionBudgets->keys())))->orderBy('name')->get()
+            ->map(function (Region $region) use ($regionBudgets, $regionFigures, $budgeting) {
+                $budget = $regionBudgets->get($region->id);
+
+                return [
+                    'key' => 'r-'.$region->id,
+                    'name' => $region->name,
+                    'department' => $budget?->department,
+                    'region' => $region,
+                    'budget' => $budget,
+                    'totals' => $budget ? $budgeting->totals($budget) : null,
+                    'position' => $regionFigures->first(fn (array $r) => $r['region']?->id === $region->id),
+                ];
+            });
+
+        $rows = $departmentRows->concat($regionRows)
             ->filter(fn (array $r) => match ($this->status) {
                 '' => true,
                 'none' => $r['budget'] === null,
@@ -127,18 +180,21 @@ class Index extends Component
             })
             ->values();
 
-        $all = $budgets->values();
+        $all = $budgets->values()->concat($regionBudgets->values());
 
         return view('livewire.budgets.index', [
             'rows' => $rows,
             'years' => FinancialYear::options(),
-            'totals' => $position->totals($yearFigures),
+            'totals' => $position->totals($yearFigures->concat($regionFigures)),
             'statusCounts' => collect(BudgetStatus::cases())->mapWithKeys(fn (BudgetStatus $s) => [$s->value => $all->where('status', $s)->count()]),
-            'withoutBudget' => Department::query()->active()->when($own, fn ($q, $id) => $q->whereKey($id))->whereNotIn('id', $budgets->keys())->count(),
+            'withoutBudget' => $rows->filter(fn (array $r) => $r['budget'] === null)->count(),
             'departments' => Department::query()->active()->ordered()->get(['id', 'name']),
-            'canPrepare' => Budgeting::canPrepare(Auth::user()) || ($own && Budgeting::canPrepareFor(Auth::user(), $own)),
-            'ownDepartment' => $own,
+            'canPrepare' => Budgeting::canPrepare(Auth::user()) || ($own && Budgeting::canPrepareFor(Auth::user(), $own)) || ($ownRegion && Budgeting::canPrepareFor(Auth::user(), (int) Auth::user()->department_id, $ownRegion)),
+            'ownDepartment' => $own ?: $ownRegion,
+            'ownRegion' => $ownRegion,
+            'office' => $office,
+            'regions' => Region::query()->where('is_active', true)->orderBy('name')->get(['id', 'name']),
             'canApprove' => Budgeting::canApprove(Auth::user()),
-        ])->title($own ? 'Workplan and budget' : 'Department budgets');
+        ])->title($ownRegion ? 'Regional workplan' : ($own ? 'Workplan and budget' : 'Department budgets'));
     }
 }

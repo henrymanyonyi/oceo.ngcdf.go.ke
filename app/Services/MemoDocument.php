@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Enums\ActivityStatus;
 use App\Enums\CostMethod;
+use App\Enums\DecisionMode;
 use App\Enums\RateUnit;
+use App\Enums\SigningAction;
 use App\Models\Activity;
 use App\Models\ActivityCost;
 use App\Models\ActivityParticipant;
@@ -36,7 +38,7 @@ use Illuminate\Support\Collection;
  */
 class MemoDocument
 {
-    public function __construct(private ParticipantChecks $checks, private DsaCalculator $dsa, private AppSettings $settings) {}
+    public function __construct(private ParticipantChecks $checks, private DsaCalculator $dsa, private AppSettings $settings, private Signing $signing, private SignatureRegistry $signatureImages) {}
 
     /**
      * What is missing or inconsistent. Blocking items stop submission for
@@ -52,13 +54,27 @@ class MemoDocument
             $issues[] = ['message' => $message, 'blocking' => $blocking, 'for_head' => $forHead];
         };
 
-        // The Head of Department issues the memo: its reference and date are theirs to give (25 October 2026).
+        // The Head of Department gives the date; the reference (REF NO) is given automatically on first
+        // submission (App\Services\MemoNumbering, November 2026).
         if ($activity->isDepartmentOriginated()) {
-            if (blank(trim((string) $activity->source_reference))) {
-                $add('Give the memo reference (REF NO).', true, forHead: true);
-            }
             if ($activity->issued_on === null) {
                 $add('Give the date the memo is issued.', true, forHead: true);
+            }
+        }
+
+        // A Regional Coordinator's memo comes from the region's approved workplan (November 2026): it names the
+        // workplan activity it carries out. Another live memo on the same activity is shown, not blocked: a workplan
+        // activity may be carried out more than once (no rule requires one memo each).
+        if ($activity->originating_region_id) {
+            if (! $activity->budget_line_id) {
+                $add('Choose the activity from your region\'s approved workplan that this memo carries out.', true, forHead: true);
+            } else {
+                $others = Activity::query()->where('budget_line_id', $activity->budget_line_id)->whereKeyNot($activity->id)
+                    ->whereNotIn('status', ActivityStatus::values(ActivityStatus::Draft, ActivityStatus::WithHod, ActivityStatus::ReturnedToPreparer, ActivityStatus::Declined, ActivityStatus::Cancelled))
+                    ->get(['reference', 'memo_number', 'source_reference']);
+                if ($others->isNotEmpty()) {
+                    $add('This workplan activity already has '.$others->count().' other memo'.($others->count() === 1 ? '' : 's').' ('.$others->map(fn (Activity $a) => $a->memoReference() ?? $a->reference)->implode(', ').'). Make sure this one is not a duplicate.', false);
+                }
             }
         }
 
@@ -110,8 +126,6 @@ class MemoDocument
         $total = Money::toCents($activity->estimated_total);
         if ($total === 0) {
             $add('The budget has no cost lines yet; the memo would request KES 0.00.', false);
-        } elseif ($activity->requested_budget !== null && Money::toCents($activity->requested_budget) !== $total) {
-            $add(sprintf('Your own estimate (KES %s) differs from the costed budget (KES %s). The memo uses the costed budget.', Money::format(Money::toCents($activity->requested_budget)), Money::format($total)), false);
         }
 
         $pending = $this->checks->pendingStaff($activity->start_date, $activity->end_date, $activity->id);
@@ -157,7 +171,7 @@ class MemoDocument
             'from' => $this->from($activity),
             // A Head's memo prints the date it is issued; an older memo, the date it was submitted, as before.
             'date' => $activity->issued_on ?? $submittedAt ?? today(),
-            'refNo' => $activity->source_reference ?: $activity->reference,
+            'refNo' => $activity->memo_number ?: ($activity->source_reference ?: $activity->reference),
             'period' => DsaPeriod::of($activity->start_date, max(1, (int) $activity->days)),
             'nightsBasis' => $this->settings->get('dsa_basis') !== DsaPeriod::BASIS_DAYS,
             'sections' => $this->sections($activity),
@@ -210,7 +224,7 @@ class MemoDocument
         }
 
         foreach ([$activity->responsibleHod, $activity->creator] as $user) {
-            if ($user?->isHeadOfDepartment()) {
+            if ($user?->isMemoOriginator()) {
                 return $user->signingDesignation();
             }
         }
@@ -299,16 +313,21 @@ class MemoDocument
         // The Head signs with their designation as recorded when they submitted ("Ag." if acting);
         // before that, with their designation on the staff list.
         $hodDesignation = $activity->signedDesignation()
-            ?? ($preparer?->isHeadOfDepartment() ? $preparer->signingDesignation() : null);
+            ?? ($preparer?->isMemoOriginator() ? $preparer->signingDesignation() : null);
 
         // Sent directly to the CEO: nobody reviews or validates it, so those blocks are left out.
         $review = $activity->isDirectToCeo() ? [] : [
-            ['label' => 'Reviewed by', 'name' => $acos?->user?->name, 'designation' => User::ROLES[User::ROLE_ASSISTANT_CHIEF_OF_STAFF], 'date' => $acos?->created_at],
-            ['label' => 'Validated by', 'name' => $cos?->user?->name, 'designation' => User::ROLES[User::ROLE_CHIEF_OF_STAFF], 'date' => $cos?->created_at],
+            ['action' => SigningAction::Reviewed, 'label' => 'Reviewed by', 'name' => $acos?->user?->name, 'designation' => User::ROLES[User::ROLE_ASSISTANT_CHIEF_OF_STAFF], 'date' => $acos?->created_at],
+            ['action' => SigningAction::Validated, 'label' => 'Validated by', 'name' => $cos?->user?->name, 'designation' => User::ROLES[User::ROLE_CHIEF_OF_STAFF], 'date' => $cos?->created_at],
         ];
 
-        return [
+        // A decision the CEO gave outside the system and the Office recorded: the CEO's name and
+        // signature are never put on the memo by the person who recorded it.
+        $recorded = $activity->approved_at && $activity->approval_mode === DecisionMode::RecordedOnBehalf;
+
+        $blocks = [
             [
+                'action' => SigningAction::Prepared,
                 'label' => 'Prepared by',
                 'name' => $preparer?->name ?? $activity->submitted_by_name,
                 'designation' => $activity->isPreparedOnBehalf()
@@ -317,8 +336,56 @@ class MemoDocument
                 'date' => $submittedAt,
             ],
             ...$review,
-            ['label' => 'Approved by', 'name' => $activity->approved_at ? ($activity->approver?->name ?? 'Chief Executive Officer') : null, 'designation' => User::ROLES[User::ROLE_CEO], 'date' => $activity->approved_at],
+            [
+                'action' => SigningAction::Approved,
+                'label' => 'Approved by',
+                'name' => $activity->approved_at && ! $recorded ? ($activity->approver?->name ?? 'Chief Executive Officer') : null,
+                'designation' => User::ROLES[User::ROLE_CEO],
+                'date' => $recorded ? null : $activity->approved_at,
+                'note' => $recorded ? 'Decision given outside the system (memo '.$activity->approval_reference.'), recorded by '.($activity->approver?->name ?? 'the Office of the CEO').' on '.$activity->approved_at->format('d/m/Y').'. Not signed in OCEO.' : null,
+            ],
         ];
+
+        return $this->withSignings($activity, $blocks);
+    }
+
+    /**
+     * Puts each officer's signing on its block (App\Services\Signing): the signature, the time and the
+     * verification code, only where the officer confirmed that step in the system, and only while the memo
+     * still reads as it did when they signed. A signing made for an earlier version is shown as such,
+     * without the signature. A block nobody signed in the system stays blank, as on older memos.
+     *
+     * @param  list<array<string, mixed>>  $blocks
+     * @return list<array<string, mixed>>
+     */
+    private function withSignings(Activity $activity, array $blocks): array
+    {
+        $hash = $this->signing->fingerprint($activity);
+
+        return array_map(function (array $block) use ($activity, $hash) {
+            $signed = $this->signing->latest($activity, $block['action'], $hash);
+            if (! $signed) {
+                return $block + ['signed' => null];
+            }
+
+            $event = $signed['event'];
+            $image = null;
+            if ($signed['valid'] && $event->signature) {
+                try {
+                    $image = $this->signatureImages->dataUri($event->signature);
+                } catch (\Throwable) {
+                    $image = null; // An altered file is never shown.
+                }
+            }
+
+            return array_merge($block, [
+                // The block shows who actually signed, from the signing record, never from the request.
+                'name' => $event->signer_name,
+                'designation' => $block['action'] === SigningAction::Prepared && $activity->isPreparedOnBehalf() ? $block['designation'] : ($event->designation ?: $block['designation']),
+                'date' => $event->signed_at,
+                'signed' => ['valid' => $signed['valid'], 'image' => $image, 'code' => $event->verification_code, 'at' => $event->signed_at],
+            ]);
+        }, $blocks);
     }
 
     /**
@@ -400,7 +467,7 @@ class MemoDocument
                 $person = $line->activity_participant_id ? $people->get($line->activity_participant_id) : null;
                 $amount = Money::toCents($line->estimated_amount);
                 $item = $line->category?->name.($line->is_computed || blank($line->description) ? '' : ': '.$line->description).($line->isOverridden() ? ' (adjusted)' : '');
-                $perPerson = ! $line->is_computed && $line->method() === CostMethod::PerPerson;
+                $perPerson = ! $line->is_computed && $line->method()->isPerPerson();
                 $quantity = $line->quantity !== null ? rtrim(rtrim((string) $line->quantity, '0'), '.') : null;
 
                 // An external participant's payment says what its count is when it is not the column's (nights or days).
@@ -428,7 +495,7 @@ class MemoDocument
                     // Per person: the number of people on the line. A participant's own line: that participant's people.
                     'pax' => $perPerson ? (int) $line->quantity : ($person?->people()),
                     'merge' => $person !== null && ! $perPerson,
-                    'days' => $perPerson ? null : $quantity,
+                    'days' => $perPerson ? ($line->method() === CostMethod::PerPersonPerDay ? (string) $line->days : null) : $quantity,
                     // Per person: the cost for one person. A fixed amount for the activity has no rate.
                     'rate' => match (true) {
                         $line->unit_rate !== null => Money::toCents($line->unit_rate),

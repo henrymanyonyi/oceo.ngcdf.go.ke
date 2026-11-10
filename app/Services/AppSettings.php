@@ -28,6 +28,7 @@ class AppSettings
         'finance_department_id' => ['Finance department (imprest instructions)', 0, 'The department whose Head receives the CEO\'s instruction to process the imprest for an approved memo.'],
         'procurement_department_id' => ['Procurement department (ticket instructions)', 0, 'The department whose Head receives the CEO\'s instruction to procure the travel tickets for an approved memo.'],
         'alerts_email' => ['Email when action is needed', 1, 'Yes: Heads of Department, the Chief of Staff and the Assistant also get an email when a memo, report or instruction needs them. It gives the reference only; the details stay in OCEO.'],
+        'memo_reference_format' => ['Memo reference format', 'NG-CDF BOARD/{unit}/{seq}/{fy}', 'Memo references are given automatically on first submission, one sequence per department or region per financial year. {unit} is the department or region code, {seq} the number in its sequence (001, 002, ...), {fy} the financial year (2026-27). Existing references never change.'],
         'alerts_sms' => ['SMS when action is needed', 1, 'Yes: they also get an SMS through SMS Leopard, to the mobile number on their account or on the staff list. It gives the reference only.'],
     ];
 

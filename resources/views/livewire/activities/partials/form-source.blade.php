@@ -30,9 +30,15 @@
                             <input id="recv" type="date" wire:model="source_received_on" class="{{ Ui::CONTROL }}">
                         </x-ui.field>
                     @else
-                        <x-ui.field label="Memo reference" for="ref" error="source_reference" required hint="Printed as REF NO on the memo.">
-                            <input id="ref" type="text" wire:model="source_reference" class="{{ Ui::CONTROL }}" maxlength="100" required placeholder="e.g. NG-CDF BOARD/ICT/004/2026">
-                        </x-ui.field>
+                        <div>
+                            <p class="{{ Ui::LABEL }}">Memo reference</p>
+                            @if ($activity?->memo_number)
+                                <p class="text-sm font-semibold text-slate-700 font-numeric">{{ $activity->memo_number }}</p>
+                            @else
+                                <p class="text-sm text-slate-500">Given automatically when you submit the memo.</p>
+                            @endif
+                            <p class="text-[11px] text-slate-400 mt-1">Printed as REF NO on the memo. Each department has its own sequence.</p>
+                        </div>
                         <x-ui.field label="Date issued" for="issued" error="issued_on" required hint="Printed as DATE on the memo.">
                             <input id="issued" type="date" wire:model="issued_on" class="{{ Ui::CONTROL }}" required>
                         </x-ui.field>

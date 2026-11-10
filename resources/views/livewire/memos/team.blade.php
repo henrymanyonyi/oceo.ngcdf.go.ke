@@ -34,7 +34,6 @@
         <x-ui.stat :index="0" icon="fa-users" label="Officers" :value="$a->staff_count" :sub="$a->external_count ? '+'.$a->external_count.' external' : 'staff on the team'" />
         <x-ui.stat :index="1" icon="fa-calendar-days" label="Days · nights" :value="$a->days.' · '.$a->nights" :sub="Ui::dateRange($a->start_date, $a->end_date)" tone="blue" />
         <x-ui.stat :index="2" icon="fa-coins" label="Planned cost" :value="Money::format(Money::toCents($a->estimated_total))" money sub="DSA and the cost lines below" tone="amber" />
-        <x-ui.stat :index="3" icon="fa-calculator" label="Your estimate" :value="$a->requested_budget !== null ? Money::format(Money::toCents($a->requested_budget)) : 'Not given'" :money="$a->requested_budget !== null" sub="from the memo" tone="slate" />
     </x-slot:stats>
 
 

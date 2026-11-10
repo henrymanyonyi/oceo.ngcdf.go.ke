@@ -202,6 +202,20 @@ class ActivityAlert extends Notification
             : $instruction->kind->office();
     }
 
+    /** To an officer who added a mobile number for their signing codes (App\Services\Signing::saveMobile). */
+    public static function mobileAdded(string $masked): self
+    {
+        return (new self('mobile_added', "Your mobile number {$masked} was added to your OCEO account for signing codes.", null, 'fa-mobile-screen', route('profile.show')))
+            ->needsAction(null, 'A mobile number was added to your OCEO account', "The mobile number {$masked} was added to your OCEO account on ".now()->format('d M Y \\a\\t H:i').' for signing codes.', 'If you did not do this, tell the System Administrator at once.');
+    }
+
+    /** To an officer whose signature was just saved (App\Services\SignatureRegistry), so a change they did not make is noticed. */
+    public static function signatureSaved(): self
+    {
+        return (new self('signature_saved', 'Your signature for OCEO was saved. It is used on what you sign from now on.', null, 'fa-signature', route('profile.show')))
+            ->needsAction(null, 'Your OCEO signature was saved', 'Your signature for OCEO was saved on '.now()->format('d M Y \a\t H:i').'.', 'If you did not do this, tell the System Administrator at once.');
+    }
+
     /** To an officer whose OCEO access was changed (App\Services\StaffChanges). */
     public static function accessChanged(?string $role, ?Department $department): self
     {

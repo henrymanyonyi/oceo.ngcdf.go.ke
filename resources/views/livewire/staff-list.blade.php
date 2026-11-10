@@ -23,15 +23,21 @@
     <x-slot:filters>
         <div class="relative flex items-center flex-1 min-w-[12rem]">
             <i class="fa-solid fa-magnifying-glass absolute left-3 text-gray-400 text-xs pointer-events-none"></i>
-            <input type="search" wire:model.live.debounce.300ms="search" placeholder="Search name, PF number or email…" class="{{ Ui::CONTROL }} pl-9" aria-label="Search">
+            <input type="search" wire:model.live.debounce.300ms="search" placeholder="{{ $directory ? 'Search name, PF number or email…' : 'Search name or PF number…' }}" class="{{ Ui::CONTROL }} pl-9" aria-label="Search">
         </div>
-        <select wire:model.live="department_id" class="{{ $sel }} shrink-0 sm:w-56" aria-label="Department"><option value="">All departments</option>@foreach ($departments as $d)<option value="{{ $d->id }}">{{ $d->name }}</option>@endforeach</select>
+        @unless ($unitScoped)
+            <select wire:model.live="department_id" class="{{ $sel }} shrink-0 sm:w-56" aria-label="Department"><option value="">All departments</option>@foreach ($departments as $d)<option value="{{ $d->id }}">{{ $d->name }}</option>@endforeach</select>
+        @endunless
         <select wire:model.live="state" class="{{ $sel }} shrink-0 sm:w-48" aria-label="Status"><option value="active">Active</option><option value="inactive">Inactive</option><option value="no_grade">Active, no job grade</option><option value="all">All</option></select>
     </x-slot:filters>
 
     <div class="flex-1 min-h-0 flex flex-col {{ Ui::CARD }}">
         @if ($staff->isEmpty())
-            <x-ui.empty icon="fa-id-badge" title="No staff" :line="$search || $department_id ? 'No officer matches the filters.' : 'Import the HR staff list or add officers one by one.'" />
+            @if ($needsSearch && mb_strlen(trim($search)) < \App\Services\StaffVisibility::MIN_SEARCH)
+                <x-ui.empty icon="fa-magnifying-glass" title="Search for an officer" line="Type at least two letters of a name or PF number. The full staff directory is open only to the CEO and the System Administrator." />
+            @else
+                <x-ui.empty icon="fa-id-badge" title="No staff" :line="$search || $department_id ? 'No officer matches the filters.' : ($unitScoped ? 'No officer of your department is on the staff list yet. Add them one by one or import a list.' : 'Import the HR staff list or add officers one by one.')" />
+            @endif
         @else
             <div class="flex-1 min-h-0 overflow-auto">
                 <table class="w-full">

@@ -40,6 +40,15 @@ class Alerts
     /** The active Head of Department of the memo's department, and the responsible Head of Department if different. */
     public function toDepartment(Activity $activity, ActivityAlert $alert): void
     {
+        // A region's memo goes to the region's coordinator (and the responsible officer), never the department's Head.
+        if ($activity->originating_region_id) {
+            $this->deliver(User::query()->role(User::ROLE_RC)->where('is_active', true)
+                ->where(fn ($q) => $q->where('region_id', $activity->originating_region_id)->when($activity->responsible_hod_id, fn ($q, $id) => $q->orWhereKey($id)))
+                ->get(), $alert);
+
+            return;
+        }
+
         $recipients = User::query()->role(User::ROLE_HOD)->where('is_active', true)
             ->where(fn ($q) => $q
                 ->when($activity->organising_department_id, fn ($q, $id) => $q->where('department_id', $id))
@@ -66,7 +75,7 @@ class Alerts
      */
     public function toUsers(iterable $users, ActivityAlert $alert): void
     {
-        $recipients = collect($users)->filter(fn (User $u) => $u->is_active && $u->hasAnyRole([User::ROLE_CEO, User::ROLE_CHIEF_OF_STAFF, User::ROLE_ASSISTANT_CHIEF_OF_STAFF, User::ROLE_HOD]));
+        $recipients = collect($users)->filter(fn (User $u) => $u->is_active && $u->hasAnyRole([User::ROLE_CEO, User::ROLE_CHIEF_OF_STAFF, User::ROLE_ASSISTANT_CHIEF_OF_STAFF, User::ROLE_HOD, User::ROLE_RC]));
 
         $this->deliver($recipients, $alert);
     }

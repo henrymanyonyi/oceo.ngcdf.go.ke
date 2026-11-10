@@ -442,7 +442,9 @@ class Show extends Component
         $lines = $this->budget->lines()->get();
         $amounts = $budgeting->lineAmounts($this->budget);
         $approved = $this->budget->status === BudgetStatus::Approved;
-        $figures = $approved ? $position->forDepartment(FinancialYear::fromLabel($this->budget->financial_year), $this->budget->department_id) : null;
+        $figures = ! $approved ? null : ($this->budget->region_id
+            ? $position->forRegion(FinancialYear::fromLabel($this->budget->financial_year), $this->budget->region_id)
+            : $position->forDepartment(FinancialYear::fromLabel($this->budget->financial_year), $this->budget->department_id));
 
         // What a reduction being drafted would leave against what is already spent and committed.
         $shortfall = null;
@@ -477,7 +479,7 @@ class Show extends Component
             'shortfall' => $shortfall,
             'preview' => $preview,
             'ownDepartment' => ! $user->canAny(['budgets.prepare', 'budgets.approve']),
-            'canPrepare' => Budgeting::canPrepareFor($user, $this->budget->department_id),
+            'canPrepare' => Budgeting::canPrepareFor($user, $this->budget->department_id, $this->budget->region_id),
             'canPropose' => Budgeting::canPrepare($user),
             'canApprove' => Budgeting::canApprove($user),
             'confirmItem' => $this->showConfirm ? $this->item($this->confirmType, $this->confirmId) : null,

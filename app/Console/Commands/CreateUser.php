@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Department;
+use App\Models\Region;
 use App\Models\Staff;
 use App\Models\User;
 use App\Support\MobileNumber;
@@ -14,19 +15,20 @@ use Illuminate\Support\Str;
  * Creates one of the accounts in User::ROLES (FRD CF-01) with a one-time random
  * password, printed once. Two-factor authentication must be set up at first
  * sign-in (CF-03). Refuses a second active account for the same role (for a
- * Head of Department, the same department).
+ * Head of Department, the same department; for a Regional Coordinator, the same region).
  */
 class CreateUser extends Command
 {
     protected $signature = 'activities:create-user
-        {role : ceo, chief_of_staff, assistant_chief_of_staff, admin or hod}
+        {role : ceo, chief_of_staff, assistant_chief_of_staff, admin, hod or regional_coordinator}
         {email : Sign-in email address}
         {name : Full name}
-        {--department= : For hod: the department name, e.g. ICT}
+        {--department= : For hod and regional_coordinator: the department name, e.g. ICT}
+        {--region= : For regional_coordinator: the region code or name, e.g. CST or "Coast Region"}
         {--staff= : PF number of the officer on the staff list; their mobile number is picked up}
         {--phone= : Mobile number for the action-needed SMS, e.g. 0712345678}';
 
-    protected $description = 'Create the CEO, Chief of Staff, Assistant Chief of Staff, System Administrator or a Head of Department account';
+    protected $description = 'Create the CEO, Chief of Staff, Assistant Chief of Staff, System Administrator, a Head of Department or a Regional Coordinator account';
 
     public function handle(): int
     {
@@ -51,7 +53,17 @@ class CreateUser extends Command
         }
 
         $department = null;
-        if (in_array($data['role'], User::DEPARTMENTAL_ROLES, true)) {
+        $region = null;
+        if (in_array($data['role'], User::REGIONAL_ROLES, true)) {
+            $given = trim((string) $this->option('region'));
+            $region = $given === '' ? null : Region::query()->where('code', strtoupper($given))->orWhere('name', $given)->first();
+            if (! $region) {
+                $this->error('Give the region with --region=CODE or --region="Name": '.Region::query()->orderBy('name')->get()->map(fn (Region $r) => "{$r->code} ({$r->name})")->implode(', ').'.');
+
+                return self::FAILURE;
+            }
+        }
+        if (in_array($data['role'], [...User::DEPARTMENTAL_ROLES, ...User::REGIONAL_ROLES], true)) {
             $department = Department::query()->where('name', trim((string) $this->option('department')))->first();
 
             if (! $department) {
@@ -61,8 +73,12 @@ class CreateUser extends Command
             }
         }
 
-        if (User::query()->role($data['role'])->where('is_active', true)->when($department, fn ($q) => $q->where('department_id', $department->id))->exists()) {
-            $this->error('An active '.User::ROLES[$data['role']].' account already exists'.($department ? " for {$department->name}" : '').'. Deactivate it first (CF-04).');
+        // One per department for a Head, one per region for a Regional Coordinator, one in total otherwise.
+        $exists = User::query()->role($data['role'])->where('is_active', true)
+            ->when($region, fn ($q) => $q->where('region_id', $region->id), fn ($q) => $q->when($department, fn ($q) => $q->where('department_id', $department->id)))
+            ->exists();
+        if ($exists) {
+            $this->error('An active '.User::ROLES[$data['role']].' account already exists'.($region ? " for {$region->name}" : ($department ? " for {$department->name}" : '')).'. Deactivate it first (CF-04).');
 
             return self::FAILURE;
         }
@@ -97,6 +113,7 @@ class CreateUser extends Command
             'phone' => $phone,
             'staff_id' => $staff?->id,
             'department_id' => $department?->id,
+            'region_id' => $region?->id,
             'password' => $password,
             'is_active' => true,
         ]);

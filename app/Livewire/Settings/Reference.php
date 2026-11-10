@@ -250,6 +250,7 @@ class Reference extends Component
             in_array($key, AppSettings::SWITCHES, true) => ['required', 'in:0,1'],
             in_array($key, AppSettings::DEPARTMENTS, true) => ['required', Rule::in([0, ...Department::query()->pluck('id')->all()])],
             is_int($def[1]) => ['required', 'integer', 'min:0', 'max:1000'],
+            $key === 'memo_reference_format' => ['required', 'string', 'max:60', 'regex:/\{unit\}/', 'regex:/\{seq\}/'],
             default => ['required', 'in:nights,days'],
         }])->all();
         $this->validate($rules);

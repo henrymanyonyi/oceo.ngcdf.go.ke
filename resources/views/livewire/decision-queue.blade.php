@@ -18,7 +18,7 @@
                         @if ($a->is_retrospective)<x-ui.badge classes="bg-red-50 text-red-700" icon="fa-backward">Retrospective</x-ui.badge>@endif
                         @if ($item['returnedAmendment'])<x-ui.badge classes="bg-orange-50 text-orange-700" icon="fa-pen">Amended after approval</x-ui.badge>@endif
                     </div>
-                    <p class="text-[12px] text-slate-500 mt-0.5 font-numeric">{{ $a->reference }} · {{ $a->organisingDepartment?->name }} · {{ $a->type?->name ?? 'No type' }} · memo {{ $a->source_reference ?: '—' }}</p>
+                    <p class="text-[12px] text-slate-500 mt-0.5 font-numeric">{{ $a->reference }} · {{ $a->organisingDepartment?->name }} · {{ $a->type?->name ?? 'No type' }} · memo {{ $a->memoReference() ?: '—' }}</p>
                     <p class="text-[13px] text-slate-600 mt-2 line-clamp-2">{{ $a->purpose }}</p>
                     @if ($a->responsibleHodLabel())
                         <p class="text-[12px] text-slate-500 mt-1"><i class="fa-solid fa-user-tie mr-1"></i>Head of Department: {{ $a->responsibleHodLabel() }}@if ($a->isPreparedOnBehalf()) · prepared on their behalf by {{ $a->creator?->name }}@endif</p>
@@ -73,6 +73,7 @@
         </x-ui.field>
         @if ($decision === 'approved')
             @can('instructions.send')<x-memo.instruct :others="$otherInstructions" />@endcan
+            @if ($selected)<x-memo.signing-confirm step="decide" :action="\App\Enums\SigningAction::Approved" :activityId="$selected->id" :sentTo="$signCodeSentTo" />@endif
         @endif
         <x-slot:footer>
             <button type="button" wire:click="$set('showDecide', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>

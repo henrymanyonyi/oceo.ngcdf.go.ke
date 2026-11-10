@@ -120,6 +120,8 @@
                                 @elseif (in_array($key, AppSettings::DEPARTMENTS, true))
                                     @php $kind = collect(\App\Enums\InstructionKind::cases())->first(fn ($k) => $k->settingKey() === $key); @endphp
                                     <select id="set-{{ $key }}" wire:model="settings.{{ $key }}" class="{{ $sel }} sm:w-80"><option value="0">{{ $kind->defaultDepartment() }} (default)</option>@foreach (\App\Models\Department::query()->active()->ordered()->get(['id', 'name']) as $d)<option value="{{ $d->id }}">{{ $d->name }}</option>@endforeach</select>
+                                @elseif ($key === 'memo_reference_format')
+                                    <input id="set-{{ $key }}" type="text" maxlength="60" wire:model="settings.{{ $key }}" class="{{ Ui::CONTROL }} sm:w-80">
                                 @elseif (in_array($key, AppSettings::SWITCHES, true))
                                     <select id="set-{{ $key }}" wire:model="settings.{{ $key }}" class="{{ $sel }} sm:w-40"><option value="0">No</option><option value="1">Yes</option></select>
                                 @else

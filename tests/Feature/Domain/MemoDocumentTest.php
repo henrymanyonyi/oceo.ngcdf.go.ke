@@ -71,7 +71,6 @@ it('lists what is missing without inventing it, and blocks submission only on wh
     $issues = collect($this->memoDocument->issues($bare));
 
     expect($issues->where('blocking', true)->pluck('message')->all())->toBe([
-        'Give the memo reference (REF NO).',
         'Give the date the memo is issued.',
         'Write the request for approval (the closing section of the memo).',
         'Write the introduction and justification (section 1.0 of the memo).',
@@ -82,9 +81,9 @@ it('lists what is missing without inventing it, and blocks submission only on wh
         ->toContain('No budget line is chosen')
         ->toContain('The budget has no cost lines yet');
 
-    // The full memo has nothing blocking; the department's own estimate differs from the costed budget, which is flagged.
+    // The full memo has nothing blocking; the department's own estimate is no longer asked for or compared (10 Nov 2026).
     expect($this->memoDocument->blockingIssues($this->memo))->toBe([])
-        ->and(collect($this->memoDocument->issues($this->memo))->pluck('message')->implode(' '))->toContain('Your own estimate (KES 250,000.00) differs from the costed budget');
+        ->and(collect($this->memoDocument->issues($this->memo))->pluck('message')->implode(' '))->not->toContain('Your own estimate');
 });
 
 it('fills the signature blocks from the audit trail as the memo moves on', function () {
@@ -156,8 +155,8 @@ it('lets the Head of Department add risks and extra sections, preview the memo, 
         ->call('addSection')
         ->call('save')->assertHasErrors(['memo_sections.0.heading', 'memo_sections.0.body'])
         ->set('memo_sections.0.heading', 'Previous review')->set('memo_sections.0.body', 'Done in March.')
-        ->call('save')->assertHasErrors(['source_reference', 'issued_on'])
-        ->set('source_reference', 'NG-CDF BOARD/ICT/002/2026')->set('issued_on', today()->toDateString())
+        ->call('save')->assertHasErrors(['issued_on'])->assertHasNoErrors(['source_reference'])
+        ->set('issued_on', today()->toDateString())
         ->call('save')->assertHasNoErrors();
 
     expect($memo->fresh())->risks->toBe('Systems downtime.')->memo_sections->toBe([['heading' => 'Previous review', 'body' => 'Done in March.']]);

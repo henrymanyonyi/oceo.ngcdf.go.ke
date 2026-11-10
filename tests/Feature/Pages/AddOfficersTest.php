@@ -26,8 +26,12 @@ function picker($test)
 }
 
 it('selects everyone shown, or everyone in one department', function () {
-    $c = picker($this)->call('selectShown');
-    expect($c->get('selectedStaff'))->toHaveCount(7);
+    // Search first: nobody is listed until a name is typed or a department chosen (10 November 2026).
+    $c = picker($this)->assertSee('Type at least two letters')->call('selectShown');
+    expect($c->get('selectedStaff'))->toBeEmpty();
+
+    $c->set('staffDepartment', (string) $this->ict->id)->call('selectShown');
+    expect($c->get('selectedStaff'))->toHaveCount(3);
 
     $c->call('clearShown');
     expect($c->get('selectedStaff'))->toBeEmpty();
@@ -64,11 +68,11 @@ it('adds the whole selection, with one reason for everyone who overlaps', functi
     expect(array_keys(app(ParticipantChecks::class)->conflictingStaff($this->activity->start_date, $this->activity->end_date, $this->activity->id)))
         ->toEqualCanonicalizing($clash->take(2)->pluck('id')->all());
 
-    $c = picker($this)->call('selectShown')->assertSee('with an overlap')->call('addStaff');
+    $c = picker($this)->set('staffDepartment', (string) $this->audit->id)->call('selectShown')->assertSee('with an overlap')->call('addStaff');
     expect($this->activity->participants()->count())->toBe(0); // reasons missing
 
     $c->set('sameConflictReason', 'Both teams needed')->call('addStaff')->assertHasNoErrors();
 
-    expect($this->activity->participants()->count())->toBe(7)
+    expect($this->activity->participants()->count())->toBe($clash->count())
         ->and($this->activity->participants()->whereNotNull('conflict_reason')->count())->toBe(2);
 });

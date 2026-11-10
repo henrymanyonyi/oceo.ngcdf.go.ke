@@ -43,7 +43,9 @@ use Throwable;
  * officer (App\Services\StaffRecords): new officers are added as theirs,
  * officers they added before are updated, everyone else is left untouched
  * and counted as skipped, and the Active column is ignored (activation is the
- * Office of the CEO's decision).
+ * Office of the CEO's decision). With $addOnly (the "Import officers" of a memo's team,
+ * November 2026) everyone imports that way, the Office of the CEO included: it adds who is
+ * missing and never changes the HR register.
  */
 class StaffImporter
 {
@@ -52,9 +54,9 @@ class StaffImporter
     /**
      * @return array{created: int, updated: int, skipped: int, errors: list<string>}
      */
-    public function import(string $path, ?User $user = null, bool $dryRun = false): array
+    public function import(string $path, ?User $user = null, bool $dryRun = false, bool $addOnly = false): array
     {
-        $office = $user === null || $user->can('reference.manage');
+        $office = ! $addOnly && ($user === null || $user->can('reference.manage'));
         if (! $office && ! $user->can('staff.add')) {
             throw new AuthorizationException('You are not permitted to import the staff list.');
         }

@@ -67,11 +67,12 @@ it('enforces the permission matrix on pages (4.1)', function () {
     // Reference data and user accounts: CEO and Chief of Staff, not the Assistant.
     foreach ([$ceo, $cos] as $user) {
         $this->actingAs($user)->get(route('settings.reference'))->assertOk();
-        $this->actingAs($user)->get(route('staff.index'))->assertOk();
         $this->actingAs($user)->get(route('users.index'))->assertOk();
     }
-    // The Assistant opens the staff list only to record promotions and transfers (staff.reassign).
-    $this->actingAs($assistant)->get(route('staff.index'))->assertOk()->assertDontSee('Add officer');
+    // The staff list: the CEO and the System Administrator only (November 2026).
+    $this->actingAs($ceo)->get(route('staff.index'))->assertOk();
+    $this->actingAs($cos)->get(route('staff.index'))->assertForbidden();
+    $this->actingAs($assistant)->get(route('staff.index'))->assertForbidden();
     $this->actingAs($assistant)->get(route('users.index'))->assertForbidden();
 
     // Audit trail: CEO and Chief of Staff, not the Assistant.

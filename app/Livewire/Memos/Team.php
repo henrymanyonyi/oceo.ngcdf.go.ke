@@ -7,6 +7,7 @@ use App\Enums\ExternalCategory;
 use App\Enums\ParticipantRole;
 use App\Enums\RateUnit;
 use App\Enums\TravelMode;
+use App\Livewire\Concerns\AddsMissingOfficers;
 use App\Livewire\Concerns\EntersCostLines;
 use App\Livewire\Concerns\EntersExternalParticipants;
 use App\Livewire\Concerns\RunsActions;
@@ -23,7 +24,7 @@ use App\Services\ActivityEditor;
 use App\Services\AppSettings;
 use App\Services\DsaCalculator;
 use App\Services\ParticipantChecks;
-use App\Services\StaffRecords;
+use App\Services\StaffVisibility;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -32,6 +33,7 @@ use Illuminate\View\View;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\On;
 use Livewire\Component;
+use Livewire\WithFileUploads;
 
 /**
  * A Head of Department builds the team and planned costs of their own memo
@@ -48,9 +50,11 @@ use Livewire\Component;
 #[Layout('layouts.admin')]
 class Team extends Component
 {
+    use AddsMissingOfficers;
     use EntersCostLines;
     use EntersExternalParticipants;
     use RunsActions;
+    use WithFileUploads;
 
     public Activity $activity;
 
@@ -66,8 +70,6 @@ class Team extends Component
     public bool $showDays = false;
 
     public bool $showCost = false;
-
-    public bool $showStaffForm = false;
 
     // Add officers.
     public string $staffSearch = '';
@@ -107,17 +109,6 @@ class Team extends Component
     public string $costTravelMode = '';
 
     // An officer missing from the staff list.
-    public string $staffNumber = '';
-
-    public string $staffName = '';
-
-    public string $staffDepartmentId = '';
-
-    public string $staffDesignationId = '';
-
-    public string $staffJobGrade = '';
-
-    public string $staffOfficeId = '';
 
     public function mount(Activity $activity, AccessLogger $log, bool $embedded = false): void
     {
@@ -142,7 +133,7 @@ class Team extends Component
         $this->reset([
             'showAdd', 'showExternal', 'showGroup', 'groupLabel', 'groupCount', 'groupGrade', 'showRemove', 'showDays', 'showCost', 'showStaffForm',
             'staffSearch', 'staffDepartment', 'selectedStaff', 'role', 'roleOther', 'participantId', 'daysStart', 'daysEnd',
-            'costId', 'costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode',
+            'costId', 'costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode', 'costQueue',
             ...self::EXTERNAL_FIELDS,
         ]);
         $this->resetCostMethod();
@@ -178,7 +169,8 @@ class Team extends Component
     {
         $onTeam = $this->activity->participants()->whereNotNull('staff_id')->pluck('staff_id')->all();
 
-        return Staff::query()->active()->search($this->staffSearch)->whereNotIn('id', $onTeam)
+        // Own department to browse; other departments by name or PF number (App\Services\StaffVisibility).
+        return app(StaffVisibility::class)->forPicker(Staff::query()->active(), Auth::user(), $this->staffSearch)->whereNotIn('id', $onTeam)
             ->when($this->staffDepartment, fn ($q, $id) => $q->where('department_id', $id))
             ->with(['department', 'designation'])->orderBy('name')->limit(100)->get();
     }
@@ -298,7 +290,7 @@ class Team extends Component
     public function openCost(?int $id = null): void
     {
         $this->resetErrorBag();
-        $this->reset(['costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode']);
+        $this->reset(['costCategoryId', 'costParticipantId', 'costDescription', 'costTravelMode', 'costQueue']);
         $this->resetCostMethod();
         $this->costId = $id;
 
@@ -314,7 +306,8 @@ class Team extends Component
         $this->showCost = true;
     }
 
-    public function saveCost(ActivityEditor $editor): void
+    /** The line in the cost popup, checked, as ActivityEditor::savePlannedCost() takes it (EntersCostLines). */
+    protected function validatedCostLine(): ?array
     {
         $this->validate([
             // DSA and external participants' allowances are calculated, never typed in.
@@ -323,23 +316,33 @@ class Team extends Component
             'costDescription' => ['nullable', 'string', 'max:255'],
             'costTravelMode' => ['nullable', 'in:'.implode(',', array_column(TravelMode::cases(), 'value'))],
             ...$this->costMethodRules(),
-        ], $this->costMethodMessages(), ['costCategoryId' => 'cost type'] + $this->costMethodAttributes());
+        ], ['costCategoryId.required' => 'Choose the cost type.'] + $this->costMethodMessages(), ['costCategoryId' => 'cost type'] + $this->costMethodAttributes());
 
         if ($this->costParticipantId && ! $this->activity->participants()->whereKey($this->costParticipantId)->exists()) {
             $this->addError('costParticipantId', 'Choose someone on this team.');
 
-            return;
+            return null;
         }
 
-        $line = $this->costId ? $this->activity->costs()->where('is_computed', false)->findOrFail($this->costId) : null;
-
-        if ($this->attempt(fn () => $editor->savePlannedCost($this->activity, [
+        return [
             'cost_category_id' => (int) $this->costCategoryId,
             'activity_participant_id' => $this->costParticipantId ? (int) $this->costParticipantId : null,
             'description' => $this->costDescription ?: null,
             'travel_mode' => $this->costTravelMode ?: null,
-        ] + $this->costMethodData(), Auth::user(), $line)) !== null) {
-            $this->done('Planned cost saved.');
+        ] + $this->costMethodData();
+    }
+
+    /** Saves the line being edited, or every line added in the popup together. */
+    public function saveCost(ActivityEditor $editor): void
+    {
+        $line = $this->costId ? $this->activity->costs()->where('is_computed', false)->findOrFail($this->costId) : null;
+        $lines = $line ? array_filter([$this->validatedCostLine()]) : $this->costLinesToSave();
+        if (! $lines) {
+            return;
+        }
+
+        if ($this->attempt(fn () => $this->saveCostLines(array_values($lines), fn (array $data) => $editor->savePlannedCost($this->activity, $data, Auth::user(), $line))) !== null) {
+            $this->done(count($lines) === 1 ? 'Planned cost saved.' : count($lines).' cost lines saved.');
         }
     }
 
@@ -352,45 +355,14 @@ class Team extends Component
         }
     }
 
-    // ── An officer missing from the staff list ─────────────────────────
+    // ── An officer missing from the staff list (App\Livewire\Concerns\AddsMissingOfficers) ──
 
-    public function openStaffForm(): void
+    /** Back to the picker with the new officers ticked. */
+    protected function missingOfficersAdded(array $staffIds, ?string $search): void
     {
-        $this->resetErrorBag();
-        $this->reset(['staffNumber', 'staffName', 'staffDesignationId', 'staffJobGrade', 'staffOfficeId']);
-        $this->staffDepartmentId = (string) (Auth::user()->department_id ?? '');
-        $this->showStaffForm = true;
-    }
-
-    public function saveStaff(StaffRecords $records): void
-    {
-        $data = $this->validate([
-            'staffNumber' => ['required', 'string', 'max:30', Rule::unique('staff', 'staff_number')],
-            'staffName' => ['required', 'string', 'max:255'],
-            'staffDepartmentId' => ['required', 'exists:departments,id'],
-            'staffDesignationId' => ['nullable', 'exists:designations,id'],
-            'staffJobGrade' => ['nullable', 'string', 'max:20', new DsaGrade],
-            'staffOfficeId' => ['nullable', 'exists:offices,id'],
-        ], ['staffNumber.unique' => 'An officer with this PF number is already on the staff list. Search for them instead.'],
-            ['staffNumber' => 'PF number', 'staffName' => 'name', 'staffDepartmentId' => 'department', 'staffJobGrade' => 'job grade']);
-
-        $staff = $this->attempt(fn () => $records->save([
-            'staff_number' => $data['staffNumber'],
-            'name' => $data['staffName'],
-            'department_id' => $data['staffDepartmentId'],
-            'designation_id' => $data['staffDesignationId'] ?: null,
-            'job_grade' => $data['staffJobGrade'] ?: null,
-            'office_id' => $data['staffOfficeId'] ?: null,
-        ], Auth::user()));
-
-        if ($staff instanceof Staff) {
-            // Back to the picker with the new officer ticked.
-            $this->showStaffForm = false;
-            $this->showAdd = true;
-            $this->staffSearch = $staff->staff_number;
-            $this->selectedStaff = [...array_map('intval', $this->selectedStaff), $staff->id];
-            $this->toast("{$staff->name} added to the staff list and ticked. Press Add to team.");
-        }
+        $this->showAdd = true;
+        $this->staffSearch = (string) $search;
+        $this->selectedStaff = array_values(array_unique([...array_map('intval', $this->selectedStaff), ...$staffIds]));
     }
 
     public function render(ParticipantChecks $checks): View

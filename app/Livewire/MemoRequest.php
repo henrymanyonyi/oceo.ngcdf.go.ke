@@ -20,6 +20,7 @@ use App\Services\DelegatedMemos;
 use App\Services\DsaCalculator;
 use App\Services\MemoDocument;
 use App\Services\PrivacyConsentService;
+use App\Services\StaffVisibility;
 use App\Support\DsaPeriod;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Carbon;
@@ -83,8 +84,6 @@ class MemoRequest extends Component
 
     /** Expected completion date: the days and nights are worked out from the two dates. */
     public string $end_date = '';
-
-    public string $requested_budget = '';
 
     public string $county_id = '';
 
@@ -287,11 +286,11 @@ class MemoRequest extends Component
         $data = $this->validate([
             ...$this->aboutRules(),
             ...$this->dateRules(),
-            'requested_budget' => ['nullable', 'numeric', 'min:0', 'max:9999999999999', 'regex:/^\d+(\.\d{1,2})?$/'],
-            'county_id' => ['nullable', 'exists:counties,id'],
-            'constituency_id' => ['nullable', 'exists:constituencies,id'],
-            'venue' => ['required', 'string', 'max:255'],
-        ], [], [...$this->aboutAttributes(), 'end_date' => 'expected completion date', 'requested_budget' => 'estimated budget']);
+            // Every part of the location is required (10 November 2026); the region comes from the constituency.
+            'county_id' => ['required', 'exists:counties,id'],
+            'constituency_id' => ['required', Rule::exists('constituencies', 'id')->where('county_id', $this->county_id ?: 0)],
+            'venue' => ['required', 'string', 'max:255', 'regex:/\S/'],
+        ], [], [...$this->aboutAttributes(), 'end_date' => 'expected completion date']);
         $data['days'] = $this->dayCount();
         $data['category_other'] = $this->categoryRequiresDetail() ? trim((string) $data['category_other']) : null;
         $first = ! $this->link()->activity_id;
@@ -347,7 +346,8 @@ class MemoRequest extends Component
         $this->act(fn () => $memos->removeParticipant($this->link(), $id), 'Removed from the team.');
     }
 
-    public function addCost(DelegatedMemos $memos): void
+    /** The line typed on the page, checked, as ActivityEditor::savePlannedCost() takes it (EntersCostLines). */
+    protected function validatedCostLine(): ?array
     {
         $this->validate([
             // DSA and external participants' allowances are calculated, never typed in.
@@ -361,18 +361,29 @@ class MemoRequest extends Component
         if ($this->costParticipant !== '' && ! $memo?->participants()->whereKey((int) $this->costParticipant)->exists()) {
             $this->addError('costParticipant', 'Choose someone on the team, or the whole activity.');
 
+            return null;
+        }
+
+        return [
+            'cost_category_id' => (int) $this->costCategory,
+            'activity_participant_id' => $this->costParticipant !== '' ? (int) $this->costParticipant : null,
+            'description' => $this->costDescription ?: null,
+        ] + $this->costMethodData();
+    }
+
+    /** Adds the line typed, then clears the fields for the next one. */
+    public function addCost(DelegatedMemos $memos): void
+    {
+        $data = $this->validatedCostLine();
+        if ($data === null) {
             return;
         }
 
-        $this->act(function () use ($memos) {
-            $memos->saveCost($this->link(), [
-                'cost_category_id' => (int) $this->costCategory,
-                'activity_participant_id' => $this->costParticipant !== '' ? (int) $this->costParticipant : null,
-                'description' => $this->costDescription ?: null,
-            ] + $this->costMethodData());
+        $this->act(function () use ($memos, $data) {
+            $memos->saveCost($this->link(), $data);
             $this->reset(['costCategory', 'costParticipant', 'costDescription']);
             $this->resetCostMethod();
-        }, 'Cost line added.', 'costAmount');
+        }, 'Cost line added. Add the next one, or carry on.', 'costAmount');
     }
 
     public function removeCost(DelegatedMemos $memos, int $id): void
@@ -420,7 +431,6 @@ class MemoRequest extends Component
             'activity_type_id' => (string) $memo->activity_type_id,
             'start_date' => $memo->start_date?->toDateString() ?? '',
             'end_date' => $memo->end_date?->toDateString() ?? '',
-            'requested_budget' => $memo->requested_budget !== null ? (string) (float) $memo->requested_budget : '',
             'county_id' => (string) $location?->county_id,
             'constituency_id' => (string) $location?->constituency_id,
             'venue' => (string) $location?->venue,
@@ -455,7 +465,7 @@ class MemoRequest extends Component
             'costCategories' => CostCategory::query()->active()->whereNotIn('code', DsaCalculator::COMPUTED_CODES)->ordered()->get(['id', 'name']),
             'roles' => ParticipantRole::cases(),
             'matches' => $memo && $editable && mb_strlen($search) >= 2
-                ? Staff::query()->active()->search($search)->whereNotIn('id', $memo->participants->pluck('staff_id')->filter())->with(['department', 'designation'])->orderBy('name')->limit(20)->get()
+                ? app(StaffVisibility::class)->forPicker(Staff::query()->active(), null, $search)->whereNotIn('id', $memo->participants->pluck('staff_id')->filter())->with(['department', 'designation'])->orderBy('name')->limit(20)->get()
                 : collect(),
             'period' => ($days = $this->dayCount()) ? DsaPeriod::of(Carbon::parse($this->start_date), $days) : null,
         ]);

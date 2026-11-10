@@ -84,6 +84,9 @@ class DelegatedMemos
         if (! $staff->is_active) {
             throw new ActivityWorkflowException("{$staff->name} is not active on the staff list.");
         }
+        if ((int) $staff->department_id !== (int) $hod->department_id) {
+            throw new AuthorizationException('You can ask only an officer of your own department to prepare a memo.');
+        }
         if (blank($staff->email) && ! MobileNumber::isValid($staff->phone)) {
             throw new ActivityWorkflowException("{$staff->name} has no email or mobile number on the staff list, so the link and its code cannot reach them. Add one first.");
         }
@@ -387,7 +390,7 @@ class DelegatedMemos
         return $memo;
     }
 
-    /** One location: the county (for DSA), constituency and venue. */
+    /** One location: county, constituency and venue (the region from the constituency). */
     private function saveLocation(Activity $memo, array $data, User $hod): void
     {
         $county = filled($data['county_id'] ?? null) ? County::query()->find($data['county_id']) : null;

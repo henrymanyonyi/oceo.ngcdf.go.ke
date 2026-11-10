@@ -51,7 +51,7 @@
             <button type="button" wire:click="$set('showReturnHod', true)" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-reply text-xs"></i>Return for correction</button>
         @endif
         @if (in_array($s, [ActivityStatus::Draft, ActivityStatus::UnderReview, ActivityStatus::Returned]) && $can('activities.submit') && ! $a->isDepartmentDraft() && ! $withChiefOfStaffOnly)
-            <button type="button" wire:click="$set('showForward', true)" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-paper-plane text-xs"></i>{{ $forwardsToChiefOfStaff ? 'Forward to Chief of Staff' : ($can('activities.decide') ? 'Submit for decision' : 'Forward to CEO') }}</button>
+            <button type="button" wire:click="openForward" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-paper-plane text-xs"></i>{{ $forwardsToChiefOfStaff ? 'Forward to Chief of Staff' : ($can('activities.decide') ? 'Submit for decision' : 'Forward to CEO') }}</button>
         @endif
         @if ($s === ActivityStatus::AwaitingDecision && $can('activities.decide'))
             <button type="button" wire:click="openDecide('returned')" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-rotate-left text-xs"></i>Return</button>
@@ -102,6 +102,17 @@
     @if ($reservedForCeo)
         <div class="px-4 py-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800"><i class="fa-solid fa-arrow-right-to-bracket mr-2"></i>The Head of Department sent this memo <strong>directly to the CEO</strong>. You can read it, but the Chief of Staff and the Assistant take no part in its review or decision.</div>
     @endif
+    @php $overdueReports = $s->isWithDepartment() && app(\App\Services\ReportCompliance::class)->applies($a) ? app(\App\Services\ReportCompliance::class)->describe($a) : []; @endphp
+    @if ($overdueReports !== [])
+        <div class="px-4 py-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-800 flex flex-wrap items-center gap-3">
+            <span class="flex-1 min-w-0"><i class="fa-solid fa-triangle-exclamation mr-2"></i>The department has {{ count($overdueReports) }} overdue activity {{ count($overdueReports) === 1 ? 'report' : 'reports' }} ({{ collect($overdueReports)->pluck('reference')->implode(', ') }}), so this memo cannot be submitted until {{ count($overdueReports) === 1 ? 'it is' : 'they are' }} in.</span>
+            @if ($can('compliance.override'))
+                <button type="button" wire:click="$set('showComplianceOverride', true)" class="{{ Ui::BTN_NEUTRAL }}"><i class="fa-solid fa-unlock text-xs"></i>Allow this memo</button>
+            @endif
+        </div>
+    @elseif ($a->compliance_override_at)
+        <div class="px-4 py-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800"><i class="fa-solid fa-unlock mr-2"></i>Allowed by the CEO on {{ Ui::date($a->compliance_override_at) }} despite overdue reports: {{ $a->compliance_override_reason }}</div>
+    @endif
     @if ($a->isDepartmentDraft())
         <div class="px-4 py-3 rounded-lg text-sm bg-sky-50 border border-sky-200 text-sky-800"><i class="fa-solid fa-circle-info mr-2"></i>The Head of Department is still preparing this memo. It reaches you when they submit it for review.</div>
     @endif
@@ -139,13 +150,12 @@
                     <div class="lg:col-span-2 space-y-4">
                         <dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div><dt class="{{ Ui::MICRO }}">Category · type</dt><dd class="text-sm text-slate-700">{{ $a->categoryLabel() }}{{ $a->type ? ' · '.$a->type->name : '' }}</dd></div>
-                            <div><dt class="{{ Ui::MICRO }}">Source memo</dt><dd class="text-sm text-slate-700 font-numeric">{{ $a->source_reference ?: '—' }}{{ $a->source_received_on ? ', received '.Ui::date($a->source_received_on) : '' }}</dd></div>
+                            <div><dt class="{{ Ui::MICRO }}">Source memo</dt><dd class="text-sm text-slate-700 font-numeric">{{ $a->memoReference() ?: '—' }}{{ $a->source_received_on ? ', received '.Ui::date($a->source_received_on) : '' }}</dd></div>
                             <div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Objective</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->purpose }}</dd></div>
                             @if ($a->expected_outputs)<div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Expected outputs</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->expected_outputs }}</dd></div>@endif
                             @if ($a->justification)<div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Justification</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->justification }}</dd></div>@endif
                             @if ($a->target_audience)<div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Participants and stakeholders</dt><dd class="text-sm text-slate-700">{{ $a->target_audience }}</dd></div>@endif
                             @if ($a->responsibleHodLabel())<div><dt class="{{ Ui::MICRO }}">Head of Department</dt><dd class="text-sm text-slate-700">{{ $a->responsibleHodLabel() }}@if ($a->isPreparedOnBehalf())<span class="text-[11px] text-purple-700"> · prepared on their behalf by {{ $a->creator?->name }}</span>@endif</dd></div>@endif
-                            @if ($a->requested_budget !== null)<div><dt class="{{ Ui::MICRO }}">Department's estimate</dt><dd class="text-sm text-slate-700 font-numeric">KES {{ Money::format(Money::toCents($a->requested_budget)) }}</dd></div>@endif
                             @if ($a->approval_request)<div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Request for approval</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->approval_request }}</dd></div>@endif
                             @if ($a->notes)<div class="sm:col-span-2"><dt class="{{ Ui::MICRO }}">Notes</dt><dd class="text-sm text-slate-700 whitespace-pre-line">{{ $a->notes }}</dd></div>@endif
                             <div><dt class="{{ Ui::MICRO }}">Budget line</dt><dd class="text-sm text-slate-700">{{ $a->budgetLine?->label() ?? '—' }}</dd></div>
@@ -522,6 +532,7 @@
         </x-ui.field>
         @if ($decision === 'approved')
             @can('instructions.send')<x-memo.instruct :sent="$a->instructions->map(fn ($i) => $i->kind->value)->all()" :others="$otherInstructions" />@endcan
+            <x-memo.signing-confirm step="decide" :action="\App\Enums\SigningAction::Approved" :sentTo="$signCodeSentTo" />
         @endif
         <x-slot:footer>
             <button type="button" wire:click="$set('showDecide', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
@@ -576,6 +587,14 @@
         </x-slot:footer>
     </x-ui.modal>
 
+    <x-ui.modal show="showComplianceOverride" :open="$showComplianceOverride" size="alert" icon="fa-unlock" title="Allow this memo?" subtitle="The department may submit this one memo although reports are overdue. Your reason is recorded and audited.">
+        <x-ui.field label="Reason" for="co-r" error="reason" required><textarea id="co-r" wire:model="reason" rows="2" class="{{ Ui::CONTROL }}"></textarea></x-ui.field>
+        <x-slot:footer>
+            <button type="button" wire:click="$set('showComplianceOverride', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
+            <button type="button" wire:click="overrideCompliance" wire:loading.attr="disabled" wire:target="overrideCompliance" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-unlock text-xs"></i>Allow</button>
+        </x-slot:footer>
+    </x-ui.modal>
+
     <x-ui.modal show="showForward" :open="$showForward" size="medium" icon="fa-paper-plane" :title="$forwardsToChiefOfStaff ? 'Forward to the Chief of Staff?' : 'Forward to the CEO?'" :subtitle="$a->reference.' · '.$a->title">
         <p class="text-[13px] text-slate-600">
             @if ($forwardsToChiefOfStaff)
@@ -591,6 +610,7 @@
         <x-ui.field label="Review comment (optional)" for="f-text" error="reviewText" hint="Kept in the memo's history as written.">
             <textarea id="f-text" wire:model="reviewText" rows="3" class="{{ Ui::CONTROL }}" maxlength="2000"></textarea>
         </x-ui.field>
+        <x-memo.signing-confirm step="forward" :action="app(\App\Services\Signing::class)->actionFor($a, auth()->user(), 'forward')" :sentTo="$signCodeSentTo" />
         <x-slot:footer>
             <button type="button" wire:click="$set('showForward', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
             <button type="button" wire:click="forward" wire:loading.attr="disabled" wire:target="forward" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-paper-plane text-xs"></i>{{ $forwardsToChiefOfStaff ? 'Forward to Chief of Staff' : 'Forward to CEO' }}</button>
@@ -675,7 +695,7 @@
         <div class="flex flex-col lg:flex-row gap-3">
             <div class="relative flex items-center flex-1 min-w-[12rem]">
                 <i class="fa-solid fa-magnifying-glass absolute left-3 text-gray-400 text-xs pointer-events-none"></i>
-                <input type="search" wire:model.live.debounce.300ms="staffSearch" placeholder="Search name, PF number or email…" class="{{ Ui::CONTROL }} pl-9" aria-label="Search staff">
+                <input type="search" wire:model.live.debounce.300ms="staffSearch" placeholder="{{ auth()->user()->can('staff.directory') ? 'Search name, PF number or email…' : 'Search name or PF number…' }}" class="{{ Ui::CONTROL }} pl-9" aria-label="Search staff" autofocus>
             </div>
             <select wire:model.live="staffDepartment" class="{{ $sel }} lg:w-60 shrink-0" aria-label="Department">
                 <option value="">All departments</option>
@@ -769,8 +789,8 @@
             @empty
                 <p class="px-4 py-8 text-center text-sm text-slate-400">
                     @if ($showSelectedOnly) Nobody selected matches these filters.
-                    @elseif ($staffSearch || $staffDepartment || $staffOffice) No active staff match these filters.
-                    @else No active staff left to add. The Chief of Staff can import the HR staff list. @endif
+                    @elseif ($staffDepartment || $staffOffice || mb_strlen(trim($staffSearch)) >= \App\Services\StaffVisibility::MIN_SEARCH) No active staff match. Check the spelling, or add the officer below if they are not on the staff list.
+                    @else <i class="fa-solid fa-magnifying-glass mr-1"></i>Type at least two letters of the officer's name or PF number, or choose a department or duty station. @endif
                 </p>
             @endforelse
         </div>
@@ -784,12 +804,21 @@
         @if ($amend)
             <x-ui.field label="Reason for changing the team" for="as-r" error="reason" required hint="The activity has been submitted or approved, so this is recorded as an amendment."><input id="as-r" type="text" wire:model="reason" maxlength="1000" class="{{ Ui::CONTROL }}"></x-ui.field>
         @endif
+        @can('staff.add')
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="text-[12px] text-slate-500">Officer not on the list?</span>
+                <button type="button" wire:click="openStaffForm" class="{{ Ui::BTN_TINT }}"><i class="fa-solid fa-id-badge text-[9px]"></i>Add an officer</button>
+                <button type="button" wire:click="openStaffImport" class="{{ Ui::BTN_TINT }}"><i class="fa-solid fa-file-import text-[9px]"></i>Import a list</button>
+            </div>
+        @endcan
         <x-slot:footer>
             <span class="mr-auto text-[13px] text-slate-500 font-numeric">{{ $selCount }} selected</span>
             <button type="button" wire:click="$set('showAddStaff', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
             <button type="button" wire:click="addStaff" wire:loading.attr="disabled" wire:target="addStaff" class="{{ Ui::BTN_PRIMARY }}" @disabled(! $selCount)><i class="fa-solid fa-user-plus text-xs"></i>Add {{ $selCount ?: '' }} to team</button>
         </x-slot:footer>
     </x-ui.modal>
+
+    @include('livewire.partials.missing-officers')
 
     @php $editingDays = $participantId ? $a->participants->firstWhere('id', $participantId) : null; @endphp
     <x-ui.modal show="showDays" :open="$showDays" size="slim" icon="fa-calendar-day" :title="'Days for '.($editingDays?->displayName() ?? 'participant')"
@@ -943,24 +972,12 @@
         </x-slot:footer>
     </x-ui.modal>
 
-    <x-ui.modal show="showCost" :open="$showCost" icon="fa-coins" :title="$costId ? 'Edit planned cost' : 'Add a planned cost'" subtitle="For one participant (air fare) or the whole activity (fuel, venue); worked out per person or as a fixed amount.">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <x-ui.field label="Cost type" for="ct-c" error="costCategoryId" required>
-                <select id="ct-c" wire:model.live="costCategoryId" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($costCategories->where('code', '!=', 'dsa') as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select>
-            </x-ui.field>
-            <x-ui.field label="For" for="ct-p" error="costParticipantId">
-                <select id="ct-p" wire:model="costParticipantId" class="{{ $sel }}"><option value="">Whole activity (shared)</option>@foreach ($a->participants as $p)<option value="{{ $p->id }}">{{ $p->displayName() }}</option>@endforeach</select>
-            </x-ui.field>
-            <x-ui.field label="Travel mode" for="ct-t" error="costTravelMode">
-                <select id="ct-t" wire:model="costTravelMode" class="{{ $sel }}"><option value="">Not travel</option>@foreach (TravelMode::cases() as $t)<option value="{{ $t->value }}">{{ $t->label() }}</option>@endforeach</select>
-            </x-ui.field>
-            <x-ui.field label="Description" for="ct-d" error="costDescription"><input id="ct-d" type="text" wire:model="costDescription" maxlength="255" class="{{ Ui::CONTROL }}" placeholder="e.g. Lunch"></x-ui.field>
-            <x-memo.cost-method class="sm:col-span-2" :headcount="$a->staff_count + $a->external_count" />
-            @if ($amend)<x-ui.field label="Reason for the change" for="ct-r" error="reason" required class="sm:col-span-2"><input id="ct-r" type="text" wire:model="reason" class="{{ Ui::CONTROL }}"></x-ui.field>@endif
-        </div>
+    <x-ui.modal show="showCost" :open="$showCost" icon="fa-coins" :title="$costId ? 'Edit planned cost' : 'Add planned costs'" subtitle="For one participant (air fare) or the whole activity (fuel, venue); per person, per person per day or a fixed amount. Add as many lines as you need, then save them together.">
+        <x-memo.cost-lines :participants="$a->participants" :headcount="$a->staff_count + $a->external_count" :days="(int) $a->days" :options="$this->costTypeOptions()" :queue="$costQueue" :editing="(bool) $costId" whole-label="Whole activity (shared)" />
+        @if ($amend)<x-ui.field label="Reason for the change" for="ct-r" error="reason" required><input id="ct-r" type="text" wire:model="reason" class="{{ Ui::CONTROL }}"></x-ui.field>@endif
         <x-slot:footer>
             <button type="button" wire:click="$set('showCost', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
-            <button type="button" wire:click="saveCost" wire:loading.attr="disabled" wire:target="saveCost" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-floppy-disk text-xs"></i>Save</button>
+            <button type="button" wire:click="saveCost" wire:loading.attr="disabled" wire:target="saveCost" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-floppy-disk text-xs"></i>{{ $costId || $costQueue === [] ? 'Save' : 'Save all lines' }}</button>
         </x-slot:footer>
     </x-ui.modal>
 
@@ -974,10 +991,10 @@
     </x-ui.modal>
 
     <x-ui.modal show="showLocation" :open="$showLocation" size="slim" icon="fa-location-dot" title="Add a location">
-        <x-ui.field label="Region" for="lc-r" error="locRegion"><select id="lc-r" wire:model.live="locRegion" class="{{ $sel }}"><option value="">Any</option>@foreach ($regions as $r)<option value="{{ $r->id }}">{{ $r->name }}</option>@endforeach</select></x-ui.field>
-        <x-ui.field label="County" for="lc-c" error="locCounty"><select id="lc-c" wire:model.live="locCounty" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($counties as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
-        <x-ui.field label="Constituency" for="lc-k" error="locConstituency"><select id="lc-k" wire:model.live="locConstituency" class="{{ $sel }}" @disabled($constituencies->isEmpty())><option value="">{{ $locCounty ? 'Any' : 'Choose a county first' }}</option>@foreach ($constituencies as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
-        <x-ui.field label="Venue" for="lc-v" error="locVenue"><input id="lc-v" type="text" wire:model="locVenue" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
+        <x-ui.field label="Region" for="lc-r" error="locRegion" required><select id="lc-r" wire:model.live="locRegion" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($regions as $r)<option value="{{ $r->id }}">{{ $r->name }}</option>@endforeach</select></x-ui.field>
+        <x-ui.field label="County" for="lc-c" error="locCounty" required><select id="lc-c" wire:model.live="locCounty" class="{{ $sel }}"><option value="">Choose…</option>@foreach ($counties as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
+        <x-ui.field label="Constituency" for="lc-k" error="locConstituency" required><select id="lc-k" wire:model.live="locConstituency" class="{{ $sel }}" @disabled($constituencies->isEmpty())><option value="">{{ $locCounty ? 'Any' : 'Choose a county first' }}</option>@foreach ($constituencies as $c)<option value="{{ $c->id }}">{{ $c->name }}</option>@endforeach</select></x-ui.field>
+        <x-ui.field label="Venue" for="lc-v" error="locVenue" required><input id="lc-v" type="text" wire:model="locVenue" maxlength="255" class="{{ Ui::CONTROL }}"></x-ui.field>
         <x-slot:footer>
             <button type="button" wire:click="$set('showLocation', false)" class="{{ Ui::BTN_NEUTRAL }}">Cancel</button>
             <button type="button" wire:click="addLocation" wire:loading.attr="disabled" wire:target="addLocation" class="{{ Ui::BTN_PRIMARY }}"><i class="fa-solid fa-plus text-xs"></i>Add</button>

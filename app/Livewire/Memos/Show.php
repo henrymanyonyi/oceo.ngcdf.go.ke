@@ -5,6 +5,7 @@ namespace App\Livewire\Memos;
 use App\Enums\ActivityStatus;
 use App\Enums\ReviewOffice;
 use App\Enums\SubmissionRoute;
+use App\Livewire\Concerns\EntersLocations;
 use App\Livewire\Concerns\RunsActions;
 use App\Livewire\Concerns\SubmitsMemo;
 use App\Models\Activity;
@@ -37,6 +38,7 @@ use Livewire\WithFileUploads;
 #[Layout('layouts.admin')]
 class Show extends Component
 {
+    use EntersLocations;
     use RunsActions;
     use SubmitsMemo;
     use WithFileUploads;
@@ -171,35 +173,12 @@ class Show extends Component
         }
     }
 
-    public function updatedLocCounty(): void
-    {
-        $this->locConstituency = '';
-    }
-
-    public function updatedLocConstituency(string $value): void
-    {
-        if ($value && $c = Constituency::find($value)) {
-            $this->locCounty = (string) $c->county_id;
-            $this->locRegion = (string) $c->region_id;
-        }
-    }
-
-    /** MD-04: another location; the county sets the DSA destination. */
+    /** MD-04: another location, every field required (EntersLocations). */
     public function addLocation(ActivityEditor $editor): void
     {
-        $this->validate([
-            'locRegion' => ['nullable', 'exists:regions,id'],
-            'locCounty' => ['nullable', 'exists:counties,id'],
-            'locConstituency' => ['nullable', 'exists:constituencies,id'],
-            'locVenue' => ['nullable', 'string', 'max:255'],
-        ]);
+        $this->validate($this->locationRules(), $this->locationMessages(), $this->locationAttributes());
 
-        if ($this->attempt(fn () => $editor->addLocation($this->activity, [
-            'region_id' => $this->locRegion ?: null,
-            'county_id' => $this->locCounty ?: null,
-            'constituency_id' => $this->locConstituency ?: null,
-            'venue' => $this->locVenue ?: null,
-        ], Auth::user()), 'Location added.')) {
+        if ($this->attempt(fn () => $editor->addLocation($this->activity, $this->locationData(), Auth::user()), 'Location added.')) {
             $this->reset(['showLocation', 'locRegion', 'locCounty', 'locConstituency', 'locVenue']);
             $this->activity->refresh();
         }

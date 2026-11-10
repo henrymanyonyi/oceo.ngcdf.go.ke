@@ -33,6 +33,13 @@ return [
         ],
     ],
 
+    // Digital signing (App\Services\Signing): submitting, forwarding and approving a memo is confirmed
+    // with the password and a one-time code sent to the officer's own email and mobile. Never switch
+    // this off on a real server: only the test suite does, so older tests need not confirm every step.
+    'signing' => [
+        'step_up' => (bool) env('ACTIVITIES_SIGNING_STEP_UP', true),
+    ],
+
     // Upload limits (kilobytes).
     'max_document_kb' => 10240,
     'max_list_kb' => 2048,

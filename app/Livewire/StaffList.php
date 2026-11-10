@@ -14,6 +14,7 @@ use App\Rules\DsaGrade;
 use App\Services\StaffChanges;
 use App\Services\StaffImporter;
 use App\Services\StaffRecords;
+use App\Services\StaffVisibility;
 use App\Support\MobileNumber;
 use Closure;
 use Illuminate\Support\Collection;
@@ -125,6 +126,12 @@ class StaffList extends Component
         if ($property === 'file') {
             $this->reset(['importErrors', 'importCheck']);
         }
+    }
+
+    /** Only the CEO and the System Administrator open the staff list (November 2026); checked here too, not only on the route. */
+    public function mount(): void
+    {
+        abort_unless(Auth::user()->can('staff.directory'), 403);
     }
 
     public function edit(?int $id = null): void
@@ -334,9 +341,12 @@ class StaffList extends Component
 
     public function render(): View
     {
-        $staff = Staff::query()
-            ->search($this->search)
-            ->when($this->department_id, fn ($q, $id) => $q->where('department_id', $id))
+        $user = Auth::user();
+        $visibility = app(StaffVisibility::class);
+        $unitScoped = $visibility->isUnitScoped($user);
+        // Who sees which officers is decided on the query (App\Services\StaffVisibility), not by the menu.
+        $staff = $visibility->forList(Staff::query(), $user, $this->search)
+            ->when($this->department_id && ! $unitScoped, fn ($q) => $q->where('department_id', $this->department_id))
             ->when($this->state === 'active', fn ($q) => $q->where('is_active', true))
             ->when($this->state === 'inactive', fn ($q) => $q->where('is_active', false))
             ->when($this->state === 'no_grade', fn ($q) => $q->where('is_active', true)->whereNull('job_grade'))
@@ -348,6 +358,9 @@ class StaffList extends Component
         return view('livewire.staff-list', [
             'staff' => $staff,
             'departments' => Department::query()->ordered()->get(['id', 'name']),
+            'directory' => $visibility->seesDirectory($user),
+            'unitScoped' => $unitScoped,
+            'needsSearch' => $visibility->listNeedsSearch($user),
             'designations' => Designation::query()->ordered()->get(['id', 'name']),
             'offices' => Office::query()->ordered()->get(['id', 'name']),
             'scheduledIds' => ScheduledStaffChange::query()->pending()->pluck('staff_id')->map(fn ($id) => (int) $id)->all(),
@@ -360,8 +373,8 @@ class StaffList extends Component
             'canReassign' => Auth::user()->can('staff.reassign'),
             ...$this->positionData(),
             'counts' => [
-                'active' => Staff::query()->where('is_active', true)->count(),
-                'no_grade' => Staff::query()->where('is_active', true)->whereNull('job_grade')->count(),
+                'active' => Staff::query()->where('is_active', true)->when($unitScoped, fn ($q) => $q->where('department_id', $user->department_id ?? 0))->count(),
+                'no_grade' => Staff::query()->where('is_active', true)->whereNull('job_grade')->when($unitScoped, fn ($q) => $q->where('department_id', $user->department_id ?? 0))->count(),
             ],
         ]);
     }

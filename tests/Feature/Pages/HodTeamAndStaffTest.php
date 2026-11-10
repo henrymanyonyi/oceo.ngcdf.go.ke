@@ -4,6 +4,7 @@ use App\Enums\ActivityStatus;
 use App\Enums\DecisionType;
 use App\Enums\ParticipantRole;
 use App\Exceptions\ActivityWorkflowException;
+use App\Livewire\Activities\Show;
 use App\Livewire\Memos\Show as MemoShow;
 use App\Livewire\Memos\Team;
 use App\Livewire\StaffList;
@@ -11,6 +12,7 @@ use App\Models\Activity;
 use App\Models\CostCategory;
 use App\Models\County;
 use App\Models\Department;
+use App\Models\Region;
 use App\Models\Staff;
 use App\Models\User;
 use App\Services\ActivityEditor;
@@ -30,36 +32,55 @@ beforeEach(function () {
     $this->memo = departmentMemo($this->hod);
 });
 
-it('shows the Head of Department the staff list in their menu, with import but without activity counts', function () {
-    Staff::factory()->create(['name' => 'Grace Wanjiru']);
+it('keeps the staff list to the CEO and the System Administrator, out of everyone else\'s menu and reach', function () {
+    $this->actingAs($this->hod)->get(route('memos.index'))->assertOk()->assertDontSee(route('staff.index'));
 
-    $this->actingAs($this->hod)->get(route('memos.index'))->assertSee(route('staff.index'));
-    $this->actingAs($this->hod)->get(route('staff.index'))->assertOk()
-        ->assertSee('Grace Wanjiru')
-        ->assertSee('Add officer')
-        ->assertSee('Import staff list')
-        ->assertDontSee('Import HR list');
+    foreach ([$this->hod, assistant(), chiefOfStaff(), User::factory()->coordinatorOf(Region::query()->firstOrFail(), $this->ict)->create()] as $user) {
+        $this->actingAs($user)->get(route('staff.index'))->assertForbidden();
+        Livewire::actingAs($user)->test(StaffList::class)->assertForbidden();
+    }
+    foreach ([ceo(), User::factory()->admin()->create()] as $user) {
+        $this->actingAs($user)->get(route('staff.index'))->assertOk();
+    }
 });
 
-it('lets a Head of Department import a staff list: new officers become theirs, officers others added are left untouched, and nobody is deactivated', function () {
+it('lets a Head of Department add a missing officer from the memo\'s team, ticked for the team, and correct only the officers they added', function () {
+    Livewire::actingAs($this->hod)->test(Team::class, ['activity' => $this->memo])
+        ->call('openStaffForm')
+        ->set('staffNumber', 'pf-9001')->set('staffName', 'Mary Achieng')
+        ->set('staffDepartmentId', (string) $this->ict->id)->set('staffJobGrade', 'ngcdf 5')
+        ->call('saveStaff')
+        ->assertHasNoErrors()
+        ->assertSet('showAdd', true)
+        ->assertSet('selectedStaff', fn (array $ids) => in_array(Staff::query()->where('staff_number', 'PF-9001')->value('id'), $ids));
+
+    $added = Staff::query()->where('staff_number', 'PF-9001')->sole();
+    expect($added)->created_by->toBe($this->hod->id)->source->toBe('department')->job_grade->toBe('5')->is_active->toBeTrue();
+
+    $imported = Staff::factory()->create();
+    expect(fn () => app(StaffRecords::class)->save(['staff_number' => 'X1', 'name' => 'Changed', 'department_id' => $this->ict->id], $this->hod, $imported))
+        ->toThrow(AuthorizationException::class);
+});
+
+it('lets a Head of Department import officers missing from the list from the memo\'s team, changing nobody already on it', function () {
     $theirs = Staff::factory()->create(['staff_number' => 'PF-100', 'name' => 'Old Name', 'created_by' => $this->hod->id]);
     $others = Staff::factory()->create(['staff_number' => 'PF-200', 'name' => 'Office Record']);
     $csv = "PF Number,Name,Job Grade,Department,Active\nPF-100,Corrected Name,5,ICT,No\nPF-200,Changed By HOD,9,ICT,No\nPF-300,New Officer,6,ICT,No\n";
 
-    Livewire::actingAs($this->hod)->test(StaffList::class)
-        ->set('file', UploadedFile::fake()->createWithContent('staff.csv', $csv))
-        ->call('import')
+    $team = Livewire::actingAs($this->hod)->test(Team::class, ['activity' => $this->memo])
+        ->call('openStaffImport')
+        ->set('staffFile', UploadedFile::fake()->createWithContent('staff.csv', $csv))
+        ->call('checkStaffImport')
+        ->assertSet('staffImportCheck', fn (?string $text) => str_contains((string) $text, '1 new officer would be added'))
+        ->call('importStaff')
         ->assertHasNoErrors()
-        ->assertDispatched('notify', message: 'Staff list imported: 1 added, 1 updated. 1 already on the list were left as they are.', type: 'success');
+        ->assertSet('showAdd', true);
 
-    expect($theirs->fresh())->name->toBe('Corrected Name')->is_active->toBeTrue()
+    $new = Staff::query()->where('staff_number', 'PF-300')->sole();
+    expect($new)->created_by->toBe($this->hod->id)->source->toBe('department')->is_active->toBeTrue()->job_grade->toBe('6')
         ->and($others->fresh())->name->toBe('Office Record')->job_grade->toBe('5')
-        ->and(Staff::query()->where('staff_number', 'PF-300')->sole())
-        ->created_by->toBe($this->hod->id)->source->toBe('department')->is_active->toBeTrue()->job_grade->toBe('6');
-
-    // Once imported, the officer is theirs to correct.
-    app(StaffRecords::class)->save(['staff_number' => 'PF-300', 'name' => 'New Officer Corrected', 'department_id' => $this->ict->id], $this->hod, Staff::query()->where('staff_number', 'PF-300')->sole());
-    expect(Staff::query()->where('staff_number', 'PF-300')->value('name'))->toBe('New Officer Corrected');
+        ->and($theirs->fresh()->is_active)->toBeTrue()
+        ->and($team->get('selectedStaff'))->toContain($new->id);
 });
 
 it('keeps the staff import closed to roles without permission', function () {
@@ -67,31 +88,21 @@ it('keeps the staff import closed to roles without permission', function () {
         ->toThrow(AuthorizationException::class);
 });
 
-it('lets a Head of Department add a missing officer and correct only the officers they added', function () {
-    Livewire::actingAs($this->hod)->test(StaffList::class)
-        ->call('edit')
-        ->set('staff_number', 'pf-9001')->set('name', 'Mary Achieng')
-        ->set('form_department_id', (string) $this->ict->id)->set('job_grade', 'ngcdf 5')
-        ->call('save')
-        ->assertHasNoErrors();
+it('lets the Office of the CEO add a missing officer from an activity\'s team, and an add-only import never changes the HR register', function () {
+    $cos = chiefOfStaff();
+    $activity = capturedActivity($cos);
+    $existing = Staff::factory()->create(['staff_number' => 'PF-700', 'name' => 'On The List', 'job_grade' => '4']);
+    $csv = "PF Number,Name,Job Grade,Department\nPF-700,Renamed By Import,9,ICT\nPF-701,Brand New,6,ICT\n";
 
-    $added = Staff::query()->where('staff_number', 'PF-9001')->sole();
-    expect($added)->created_by->toBe($this->hod->id)->source->toBe('department')->job_grade->toBe('5')->is_active->toBeTrue();
+    Livewire::actingAs($cos)->test(Show::class, ['activity' => $activity])
+        ->call('openStaffImport')
+        ->set('staffFile', UploadedFile::fake()->createWithContent('staff.csv', $csv))
+        ->call('importStaff')
+        ->assertHasNoErrors()
+        ->assertSet('showAddStaff', true);
 
-    Livewire::actingAs($this->hod)->test(StaffList::class)
-        ->call('edit', $added->id)->set('name', 'Mary A. Achieng')->set('is_active', false)->call('save');
-
-    expect($added->fresh())->name->toBe('Mary A. Achieng')->is_active->toBeTrue();
-
-    $imported = Staff::factory()->create();
-    Livewire::actingAs($this->hod)->test(StaffList::class)->call('edit', $imported->id)->assertForbidden();
-    expect(fn () => app(StaffRecords::class)->save(['staff_number' => 'X1', 'name' => 'Changed', 'department_id' => $this->ict->id], $this->hod, $imported))
-        ->toThrow(AuthorizationException::class);
-});
-
-it('opens the staff list to the Assistant only to record position changes, not to add or import officers', function () {
-    $this->actingAs(assistant())->get(route('staff.index'))->assertOk()->assertDontSee('Add officer')->assertDontSee('Import HR list');
-    Livewire::actingAs(assistant())->test(StaffList::class)->call('checkImport')->assertForbidden();
+    expect($existing->fresh())->name->toBe('On The List')->job_grade->toBe('4')
+        ->and(Staff::query()->where('staff_number', 'PF-701')->exists())->toBeTrue();
 });
 
 it('builds the team and costs on the Head of Department\'s draft, with DSA at the officer\'s standard rate', function () {
@@ -224,6 +235,7 @@ it('adds a location with a county from the memo page', function () {
     Livewire::actingAs($this->hod)->test(MemoShow::class, ['activity' => $this->memo])
         ->set('showLocation', true)
         ->set('locCounty', (string) $county->id)->set('locVenue', 'Kisumu office')
+        ->set('locConstituency', (string) $county->constituencies()->value('id'))
         ->call('addLocation')
         ->assertHasNoErrors();
 
